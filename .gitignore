@@ -1,0 +1,13 @@
+# Local installers, archives and generated logs
+*.exe
+*.msi
+*.zip
+*.ipa
+*.log
+logs/
+
+# Local credentials and desktop metadata
+.env
+.env.*
+desktop.ini
+Thumbs.db
