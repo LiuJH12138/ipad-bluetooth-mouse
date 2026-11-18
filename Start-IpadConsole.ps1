@@ -1,4 +1,5 @@
-﻿$ErrorActionPreference = 'Stop'
+﻿param([switch]$Usb)
+$ErrorActionPreference = 'Stop'
 $node = (Get-Command node.exe -ErrorAction Stop).Source
 $local = Join-Path $PSScriptRoot '.local'
 $null = New-Item -ItemType Directory -Path $local -Force
@@ -20,6 +21,7 @@ if ($null -eq $session) {
     }
     if ($null -eq $session) { throw 'Local server failed to start. Check .local/server-error.log.' }
 }
+$url = if ($Usb) { $session.url.Replace('#', '?source=usb#') } else { $session.url }
 $chrome = Join-Path $env:ProgramFiles 'Google\Chrome\Application\chrome.exe'
-if (Test-Path -LiteralPath $chrome) { Start-Process -FilePath $chrome -ArgumentList @($session.url) }
-else { Start-Process $session.url }
+if (Test-Path -LiteralPath $chrome) { Start-Process -FilePath $chrome -ArgumentList @($url) }
+else { Start-Process $url }

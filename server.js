@@ -4,8 +4,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { BluetoothBridge } = require('./lib/bluetooth');
+const { UsbVideo } = require('./lib/usb-video');
 
 function createApp({ bridge, token, now = Date.now }) {
+  const usb = new UsbVideo();
   let lease = null, frame = null;
   function release() { lease = null; bridge.release(); }
   function expire() { if (lease && (now() - lease.time > 1200 || bridge.active !== 1)) release(); if (frame && now() - frame.time > 4000) frame = null; }
@@ -25,7 +27,8 @@ function createApp({ bridge, token, now = Date.now }) {
     const pathname = new URL(req.url, origin).pathname;
     if (!pathname.startsWith('/api/')) {
       const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/keyboard.js': ['keyboard.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
-      if (req.method !== 'GET' || !assets[pathname]) return json(res, 404, { error: 'Not found' });
+      assets['/usb-video.js'] = ['usb-video.js', 'text/javascript'];
+      if (req.method !== 'GET' || !Object.hasOwn(assets, pathname)) return json(res, 404, { error: 'Not found' });
       const [file, type] = assets[pathname]; res.setHeader('Content-Type', type + '; charset=utf-8');
       fs.createReadStream(path.join(__dirname, 'web', file)).pipe(res); return;
     }
@@ -39,6 +42,7 @@ function createApp({ bridge, token, now = Date.now }) {
         res.setHeader('Content-Type', 'image/jpeg'); res.setHeader('X-Frame-Age-Ms', String(now() - frame.time)); res.end(frame.bytes); return;
       }
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
+      if (pathname === '/api/usb/video') { await usb.stream(res); return; }
       if (pathname === '/api/frame') {
         const bytes = await body(req, 2 * 1024 * 1024);
         if (req.headers['content-type'] !== 'image/jpeg' || bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) return json(res, 400, { error: '无效 JPEG' });

@@ -1,5 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
+const startUsb = new URLSearchParams(location.search).get('source') === 'usb';
 const token = location.hash.slice(1) || sessionStorage.getItem('control-token');
 if (location.hash) { sessionStorage.setItem('control-token', token); history.replaceState(null, '', '/'); }
 let stream, lease, seq = 0, connected = false, keyboardConnected = false, pad = null;
@@ -12,13 +13,19 @@ async function api(route, data, options = {}) {
   const response = await fetch('/api/' + route, { method: data === undefined ? 'GET' : 'POST', headers: { 'X-Control-Token': token || '', 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data), ...options });
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '请求失败'); return result;
 }
-function ready() { return connected && stream?.getVideoTracks()[0]?.readyState === 'live'; }
+const usbCanvas = $('usb-canvas');
+let usbSession = null, usbLive = false;
+function hasPicture() {
+  return usbLive || stream?.getVideoTracks()[0]?.readyState === 'live';
+}
+function ready() { return connected && hasPicture(); }
 function update() {
   $('control').disabled = !ready() || !!document.pointerLockElement; $('connect').disabled = connected;
   $('release').disabled = !lease; $('search').disabled = !ready() || !keyboardConnected;
-  $('disconnect').disabled = !connected; $('snapshot').disabled = !stream;
+  $('disconnect').disabled = !connected; $('snapshot').disabled = !hasPicture();
   for (const id of ['tap','up','down']) $(id).disabled = !ready();
-  $('stop-share').disabled = !stream;
+  $('stop-share').disabled = !stream && !usbSession;
+  $('usb').disabled = !!usbSession;
   $('mode-label').textContent = document.pointerLockElement ? '键鼠控制中 · Esc 退出' : lease ? '触控板控制中' : '预览模式';
   document.body.classList.toggle('controlling', !!lease);
 }
@@ -57,6 +64,11 @@ function send(x = 0, y = 0, wheel = 0, b = buttons) {
   return inputChain;
 }
 async function stopShare() {
+  if (usbSession) usbSession.abort();
+  usbSession = null;
+  usbLive = false;
+  usbCanvas.hidden = true;
+  usbCanvas.width = usbCanvas.height = 1;
   await stopControl();
   if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; video.srcObject = null;
   video.classList.remove('active'); $('placeholder').hidden = false; $('video-dot').classList.remove('on'); $('video-status').textContent = '等待选择画面';
@@ -72,14 +84,49 @@ $('share').onclick = async () => {
     notice('画面已接入。确认显示的是 iPad，再连接蓝牙。'); update();
   } catch (e) { if (e.name !== 'NotAllowedError') notice('共享失败：' + e.message, true); }
 };
+$('usb').onclick = async () => {
+  await stopShare();
+  const session = new AbortController();
+  usbSession = session;
+  update();
+  $('video-status').textContent = '正在打开 USB 视频…';
+  let frames = 0, decodeMs = 0, last = performance.now();
+  try {
+    await playUsbVideo({ token, canvas: usbCanvas, signal: session.signal, onFrame(ms) {
+      if (usbSession !== session) return;
+      if (!usbLive) {
+        usbLive = true;
+        usbCanvas.hidden = false;
+        $('placeholder').hidden = true;
+        $('video-dot').classList.add('on');
+        $('video-status').textContent = 'USB 直连 · 已收到画面';
+        notice('USB 画面已接入。连接蓝牙后即可开始键鼠控制。');
+        last = performance.now();
+        update();
+      }
+      frames++;
+      decodeMs += ms;
+      const elapsed = performance.now() - last;
+      if (elapsed >= 1000) {
+        $('video-status').textContent = 'USB · ' + Math.round(1000 * frames / elapsed) + ' fps · 本机解码绘制 ' + Math.round(decodeMs / frames) + ' ms';
+        frames = 0; decodeMs = 0; last = performance.now();
+      }
+    } });
+  } catch (error) {
+    if (usbSession === session) notice(error.message, true);
+  } finally {
+    if (usbSession === session) await stopShare();
+  }
+};
 $('stop-share').onclick = stopShare;
 $('connect').onclick = async () => { try { $('connect').disabled = true; await api('connect', {}); notice('正在启动蓝牙，iPad 配对成功后会显示已连接。'); } catch(e) { notice(e.message,true); $('connect').disabled = false; } };
 $('disconnect').onclick = async () => { await stopControl(); try { await api('disconnect', {}); connected = false; update(); } catch(e) { notice(e.message,true); } };
 $('control').onclick = async () => {
   try {
     // Call within the direct click gesture; acquire a control lease after the browser grants capture.
-    await video.requestPointerLock();
-    if(document.pointerLockElement !== video) throw new Error('鼠标捕获已取消。');
+    const surface = usbLive ? usbCanvas : video;
+    await surface.requestPointerLock();
+    if(document.pointerLockElement !== surface) throw new Error('鼠标捕获已取消。');
     await ensureLease(); notice('键鼠已交给 iPad。可直接移动、点击、滚动和输入，按 Esc 退出。');
   } catch(e) { await stopControl(); notice('未进入鼠标捕获。可以使用下方触控板。' + e.message, true); }
 };
@@ -129,10 +176,13 @@ setInterval(async () => {
   } catch(e) { connected=false; await stopControl(); notice('本机服务不可用，请重新运行启动器。',true); }
 },1000);
 function frameCanvas() {
-  if(!stream || !video.videoWidth) return null;
-  const canvas=document.createElement('canvas'); const scale=Math.min(1,1600/video.videoWidth);
-  canvas.width=Math.round(video.videoWidth*scale); canvas.height=Math.round(video.videoHeight*scale);
-  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height); return canvas;
+  const source = usbLive ? usbCanvas : video;
+  const width = usbLive ? source.width : video.videoWidth;
+  const height = usbLive ? source.height : video.videoHeight;
+  if (!hasPicture() || !width || !height) return null;
+  const canvas=document.createElement('canvas'); const scale=Math.min(1,1600/width);
+  canvas.width=Math.round(width*scale); canvas.height=Math.round(height*scale);
+  canvas.getContext('2d').drawImage(source,0,0,canvas.width,canvas.height); return canvas;
 }
 $('frames').onchange = () => { if(!$('frames').checked) clearFrame(); };
 setInterval(async () => {
@@ -167,4 +217,5 @@ for(const type of ['keydown','keyup'])document.addEventListener(type,e=>{
 },true);
 $('command-control').onchange=()=>{keyboard.commandControl=$('command-control').checked;keyboard.clear();if(lease&&keyboardConnected)sendKeys(keyboard.report());};
 $('release').onclick=stopControl;
+if (startUsb) $('usb').click();
 $('search').onclick=async()=>{try{await ensureLease();await sendKeys({modifiers:8,keys:[44]});await sendKeys({modifiers:0,keys:[]});}catch(e){notice(e.message,true);}};

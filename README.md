@@ -7,18 +7,18 @@
 
 ## 这个项目做什么
 
-在 Windows 浏览器里查看 iPad 投屏，并通过电脑的键盘、鼠标操作 iPad。浏览器接收你选择的投屏窗口，Windows 通过标准 Bluetooth LE HID 模拟鼠标与键盘。
+用一根 USB 数据线把 iPad 画面送到 Windows 浏览器，再用电脑的键盘和鼠标操作 iPad。视频走 USB，键鼠走标准蓝牙 HID，两条通道在同一页面汇合。
 
 | 能力 | 使用方式 |
 | --- | --- |
-| 实时画面 | 浏览器原生窗口共享，接入现有的爱思 USB 投屏 |
+| 实时画面 | USB 直接接收 iPad 的 H.264 视频，Chrome 或 Edge 就地解码 |
 | 直接键鼠控制 | 点击「开始键鼠控制」，移动、点击、拖动、滚动、输入；`Esc` 退出 |
 | 精细调整 | 备用触控板、左键与滚动按钮 |
 | Windows 键位习惯 | 可将 `Ctrl` 映射到 iPad 的 `Command` |
 | 助手视野 | 可选开启本机帧接口，读取短时有效的 JPEG 图像 |
 | 独立脚本 | 保留 PowerShell 命令行控制方式 |
 
-**不需要额外的 iPad 控制 App，不需要 npm 安装依赖。** 画面仍由已有投屏软件提供，本项目不实现 AirPlay 或 USB 视频协议。
+**iPad 端免装 App。** Windows 首次配置需要下载 USB 视频组件。当前直连模式只传画面。已有投屏窗口也可通过「共享已有窗口」接入。
 
 ## 快速开始
 
@@ -29,24 +29,34 @@
 - **Node.js 22 或更新版本**；本机验证使用 Node.js 26。
 - Chrome 或 Edge 桌面浏览器。
 - iPad 已解锁，蓝牙开启，能连接标准蓝牙鼠标和键盘。
-- 在 [爱思投屏](https://www.i4.cn/pro_screen.html) 中打开 iPad 的 USB 实时预览。
+- 一根支持数据传输的 USB 线。首次连接时，在 iPad 上确认信任电脑。
+
+### USB 配置
+
+在项目目录运行一次下列命令。脚本从 Mirrorlab 的固定提交下载 Windows x64 采集程序和运行库，逐个验证文件后放入 `.local/usb-v0.2.0`。脚本只安装项目目录中的组件，驱动单独配置。
+
+```powershell
+powershell.exe -NoProfile -File .\Install-UsbReceiver.ps1
+```
+
+电脑需要 Apple Mobile Device USB 驱动，以及针对这台 iPad 的 libusb-win32 采集过滤驱动。已有驱动的电脑可以直接启动。新电脑若提示缺少过滤驱动，请按上游的 Windows USB 配置说明为目标设备配置，再重新插线。[Mirrorlab 固定版本](https://github.com/SimonDaBoss/mirrorlab/tree/ade4e6429690ebcf430ea19a142a2e01546da8ef) · [iPhoneMirror 驱动配置](https://github.com/RayrenSX/iPhoneMirror)
 
 ### 启动
 
 1. 将整个仓库下载到本地，解压。
 2. 双击 **`Start-IpadConsole.cmd`**。启动器在后台启动本机服务，并打开控制页面。
-3. 点击 **「选择投屏窗口」**，在浏览器的「窗口」标签中选择真正显示 iPad 画面的爱思预览，再点击分享。
+3. 用数据线接入并解锁 iPad，关闭其他正在使用它的 USB 投屏窗口，点击 **「USB 直连」**。画面出现后，页面会显示帧率与本机解码绘制耗时。
 4. 点击 **「连接蓝牙」**。首次使用时，在 iPad「设置 → 蓝牙」中选择这台 Windows 电脑的名称，并核对两端配对提示。
 5. 页面显示鼠标、键盘均已连接后，点击 **「开始键鼠控制」**。如浏览器请求鼠标捕获，按提示允许。
 6. 按 **`Esc`** 把键鼠还给电脑。
 
-也可以从项目目录启动：
+也可以从项目目录直接打开 USB 预览。
 
 ```powershell
-powershell.exe -NoProfile -File .\Start-IpadConsole.ps1
+powershell.exe -NoProfile -File .\Start-IpadConsole.ps1 -Usb
 ```
 
-浏览器的画面选择授权由用户完成，每次重新打开或刷新页面都需要重新选择。蓝牙配对通常可复用。
+蓝牙配对通常可以复用。使用备用的窗口共享模式时，浏览器会要求手动选择窗口。
 
 ## 如何操作
 
@@ -63,8 +73,9 @@ powershell.exe -NoProfile -File .\Start-IpadConsole.ps1
 
 ```mermaid
 flowchart LR
-    I["iPad"] -->|"USB 投屏"| M["现有投屏软件"]
-    M -->|"浏览器授权的窗口共享"| B["本机控制页面"]
+    I["iPad"] -->|"USB · H.264"| M["USB 采集组件"]
+    M -->|"本机视频流"| N["127.0.0.1 Node 服务"]
+    N -->|"原始码流"| B["浏览器 · WebCodecs 解码与显示"]
     B -->|"键鼠事件 / 会话令牌"| N["127.0.0.1 Node 服务"]
     N -->|"有序命令队列"| P["Windows PowerShell / WinRT"]
     P -->|"Bluetooth LE HID 鼠标 + 键盘"| I
@@ -72,7 +83,7 @@ flowchart LR
     N -.->|"经授权的本机读取"| A["助手 / 自动化工具"]
 ```
 
-这里把问题分成画面、输入和使用界面三部分。成熟投屏软件负责视频协议，标准蓝牙 HID 负责输入，本地网页负责把两者组织成一个可操作的界面。没有修改爱思程序，也没有注入或重挂它的窗口。
+采集组件通过 USB 接收 iPad 编码好的视频。本机服务原样转发，浏览器在低延迟模式下解码并绘制。这样省去了桌面窗口捕获和二次编码。键鼠独立通过蓝牙返回 iPad。
 
 ## 助手如何读取画面
 
@@ -95,6 +106,7 @@ flowchart LR
 | 接口 | 用途 |
 | --- | --- |
 | `GET /api/status` | 鼠标、键盘、控制租约与图像状态 |
+| `POST /api/usb/video` | 打开单个 USB 视频流，关闭连接即释放设备 |
 | `POST /api/connect`、`/api/disconnect` | 启停蓝牙子进程 |
 | `POST /api/control/start` | 取得唯一控制租约 |
 | `POST /api/heartbeat`、`/api/control/stop` | 保活或释放租约 |
@@ -125,8 +137,9 @@ powershell.exe -NoProfile -File .\IpadBluetoothMouse.ps1
 
 | 现象 | 处理 |
 | --- | --- |
-| 窗口共享中找不到画面 | 先还原爱思预览窗口；选择预览而不是爱思主面板 |
-| 画面黑屏或冻结 | 确认原预览能刷新，再重新共享；暂不依赖最小化窗口的捕获行为 |
+| USB 直连找不到设备 | 使用数据线，只接入一台已解锁且信任本机的 iPad，并检查 Apple USB 驱动 |
+| USB 被占用或没有画面 | 停止其他标签页或软件中的 USB 投屏，等待释放后重试。必要时重新插线 |
+| 备用窗口共享没有画面 | 还原实际显示 iPad 画面的窗口，再从「共享已有窗口」中选择它 |
 | 鼠标连上，键盘没有连上 | 旧配对可能缓存了鼠标描述符。在 iPad 忽略旧电脑设备，再重新配对组合设备 |
 | 蓝牙启动显示 `Aborted` | 确认电脑蓝牙开启、没有其他脚本实例；稍后重试 |
 | 启动较慢 | 首次 WinRT / 蓝牙初始化可能需要等待，页面会显示启动状态 |
@@ -144,7 +157,7 @@ node --check lib/bluetooth.js
 node --check web/app.js
 ```
 
-自动测试覆盖访问隔离、控制租约、过期或重复输入、队列积压、鼠标与键盘释放、键位映射，以及图像过期。测试使用模拟蓝牙传输，不替代实机配对和操作验证。
+自动测试覆盖 USB 视频分包、帧大小限制、H.264 关键帧识别、访问隔离、控制租约、输入队列、键鼠释放与图像过期。蓝牙传输使用模拟对象。
 
 实机进展见 [验证记录](docs/validation.md)。
 
@@ -152,6 +165,8 @@ node --check web/app.js
 IpadBluetoothMouse.ps1   蓝牙 HID 鼠标与键盘
 server.js               仅本机 HTTP 服务与控制租约
 lib/bluetooth.js        子进程、协议解析与有序输入队列
+lib/usb-video.js        USB 设备检测、采集和视频转发
+Install-UsbReceiver.ps1 下载并校验 Windows USB 采集组件
 web/                    控制页面与物理键位映射
 Start-IpadConsole.cmd   双击入口
 Start-IpadConsole.ps1   启动并打开浏览器

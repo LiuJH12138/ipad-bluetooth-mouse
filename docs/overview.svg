@@ -6,7 +6,7 @@
 <rect x="72" y="223" width="450" height="162" rx="9" fill="#142b3a"/>
 <rect x="194" y="240" width="206" height="126" rx="12" fill="#0a131f" stroke="#71e1cf" stroke-width="2"/>
 <path d="M275 283 L275 326 L287 314 L298 335 L308 329 L297 309 L315 307 Z" fill="#71e1cf"/>
-<g fill="#b5c9dd" font-size="15"><text x="540" y="251">LIVE WINDOW</text><text x="540" y="298">MOUSE + KEYS</text><text x="540" y="345">LOCAL FRAMES</text></g>
+<g fill="#b5c9dd" font-size="15"><text x="540" y="251">USB VIDEO</text><text x="540" y="298">MOUSE + KEYS</text><text x="540" y="345">LOCAL FRAMES</text></g>
 <g fill="#71e1cf"><circle cx="710" cy="245" r="4"/><circle cx="710" cy="292" r="4"/><circle cx="710" cy="339" r="4"/></g>
 <path d="M766 293 H850 M836 281 L850 293 L836 305" fill="none" stroke="#71e1cf" stroke-width="2"/>
 <rect x="888" y="207" width="218" height="194" rx="18" fill="#09111d" stroke="#526a83" stroke-width="3"/><rect x="901" y="221" width="192" height="162" rx="9" fill="#173540"/>
