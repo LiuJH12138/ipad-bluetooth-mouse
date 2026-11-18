@@ -121,3 +121,23 @@ details[open] > summary::after { transform: rotate(225deg); }
   button { min-height: 40px; }
 }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }
+
+.monitor:fullscreen {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  border: 0;
+  border-radius: 0;
+  background: #111412;
+}
+.monitor:fullscreen .monitor-head,
+.monitor:fullscreen.captured .transport { display: none; }
+.monitor:fullscreen #stage { height: 100%; min-height: 0; aspect-ratio: auto; background: #111412; }
+.monitor:fullscreen .transport { background: #2a302d; flex-wrap: wrap; }
+#fullscreen-error { display: none; }
+.monitor:fullscreen #fullscreen-error:not(:empty) {
+  display: block;
+  padding: 8px 16px;
+  color: #ffe2db;
+  background: #52382f;
+}

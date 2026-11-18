@@ -15,7 +15,7 @@
   </header>
   <main>
     <div class="workspace">
-      <section class="monitor" aria-labelledby="preview-heading">
+      <section id="monitor" class="monitor" aria-labelledby="preview-heading">
         <div class="monitor-head">
           <h2 id="preview-heading">屏幕预览</h2>
           <span class="signal"><i id="video-dot" aria-hidden="true"></i><span id="video-status">等待画面</span></span>
@@ -32,10 +32,12 @@
         <div class="transport">
           <div class="transport-state"><span id="mode-label">预览模式</span><small><kbd>Esc</kbd> 退出控制</small></div>
           <div class="actions">
+            <button id="fullscreen" aria-controls="monitor" disabled>全屏</button>
             <button id="release" hidden>结束控制</button>
             <button id="control" class="action" disabled>开始键鼠控制</button>
           </div>
         </div>
+        <p id="fullscreen-error" role="status"></p>
       </section>
       <aside class="inspector" aria-label="设备连接和设置">
         <h2>设备连接</h2>

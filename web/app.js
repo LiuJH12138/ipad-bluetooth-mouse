@@ -8,7 +8,11 @@ let inputChain = Promise.resolve(), leaseWait = null, controlEpoch = 0;
 let dx = 0, dy = 0, buttons = 0, inputBusy = false, frameBusy = false, frameEpoch = 0;
 const keyboard = new IpadKeyboard.KeyboardState();
 const video = $('video');
-function notice(message, error = false) { $('notice').textContent = message; $('notice').classList.toggle('error', error); }
+function notice(message, error = false) {
+  $('notice').textContent = message;
+  $('notice').classList.toggle('error', error);
+  $('fullscreen-error').textContent = error && document.fullscreenElement === $('monitor') ? message : '';
+}
 async function api(route, data, options = {}) {
   const response = await fetch('/api/' + route, { method: data === undefined ? 'GET' : 'POST', headers: { 'X-Control-Token': token || '', 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data), ...options });
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '请求失败'); return result;
@@ -19,7 +23,29 @@ function hasPicture() {
   return usbLive || stream?.getVideoTracks()[0]?.readyState === 'live';
 }
 function ready() { return connected && hasPicture(); }
+const monitor = $('monitor');
+const fullscreenButton = $('fullscreen');
+fullscreenButton.hidden = !document.fullscreenEnabled;
+fullscreenButton.onclick = async () => {
+  try {
+    if (document.fullscreenElement === monitor) await document.exitFullscreen();
+    else await monitor.requestFullscreen();
+  } catch {
+    notice('全屏切换失败，请在当前浏览器窗口重试。', true);
+  }
+};
+document.addEventListener('fullscreenchange', () => {
+  const active = document.fullscreenElement === monitor;
+  fullscreenButton.textContent = active ? '退出全屏' : '全屏';
+  if (!active) {
+    $('fullscreen-error').textContent = '';
+    stopControl();
+  }
+  update();
+});
 function update() {
+  fullscreenButton.disabled = !hasPicture() && document.fullscreenElement !== monitor;
+  monitor.classList.toggle('captured', !!document.pointerLockElement && !!lease);
   $('control').disabled = !ready() || !!document.pointerLockElement; $('connect').disabled = connected;
   $('release').disabled = !lease; $('search').disabled = !ready() || !keyboardConnected;
   $('disconnect').disabled = !connected; $('snapshot').disabled = !hasPicture();
