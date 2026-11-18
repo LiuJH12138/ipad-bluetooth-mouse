@@ -59,4 +59,11 @@ $package = Join-Path $out 'iPad-Control-Console-1.0.0-win-x64.msi'
 & "$wix/light.exe" -nologo -spdb -out $package "$work/installer.wixobj"
 Check 'Link and validate the installer'
 (Get-FileHash $package).Hash.ToLowerInvariant() + '  ' + (Split-Path $package -Leaf) | Set-Content -Encoding ascii "$package.sha256"
+$generated = (Resolve-Path -LiteralPath $work).Path
+if ([IO.Path]::GetDirectoryName($generated) -ne (Resolve-Path -LiteralPath $out).Path -or
+    [IO.Path]::GetFileName($generated) -notmatch '^[0-9a-f]{32}$' -or
+    (Get-Item -LiteralPath $generated).Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) {
+    throw 'Unexpected staging directory'
+}
+Remove-Item -LiteralPath $generated -Recurse -Force
 Write-Output $package

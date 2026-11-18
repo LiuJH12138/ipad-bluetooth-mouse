@@ -45,11 +45,15 @@ const manifest = `<?xml version="1.0" encoding="utf-8"?>
   <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
   <Icon Id="ConsoleIcon" SourceFile="${xml(icon)}"/><Property Id="ARPPRODUCTICON" Value="ConsoleIcon"/>
   <Property Id="ARPURLINFOABOUT" Value="https://github.com/LiuJH12138/ipad-bluetooth-mouse"/>
+  <Property Id="INSTALLDIR" Secure="yes">
+    <RegistrySearch Id="ExistingInstallDirectory" Root="HKCU" Key="Software\\LiuJH12138\\iPadControlConsole" Name="InstallDirectory" Type="raw" Win64="yes"/>
+  </Property>
   <Directory Id="TARGETDIR" Name="SourceDir">
     <Directory Id="LocalAppDataFolder"><Directory Id="INSTALLDIR" Name="iPadControlConsole">${tree}</Directory></Directory>
     <Directory Id="ProgramMenuFolder"><Component Id="AppShortcut" Guid="A1DBB413-A167-444D-A58C-430CD09D7D5C" Win64="yes">
-      <Shortcut Id="OpenApp" Name="iPad 控制台" Target="[#AppExe]" WorkingDirectory="INSTALLDIR" Icon="ConsoleIcon"/>
+      <Shortcut Id="OpenApp" Name="iPad 控制台" Target="[INSTALLDIR]iPadControlConsole.exe" WorkingDirectory="INSTALLDIR" Icon="ConsoleIcon"/>
       <RegistryValue Root="HKCU" Key="Software\\LiuJH12138\\iPadControlConsole" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
+      <RegistryValue Root="HKCU" Key="Software\\LiuJH12138\\iPadControlConsole" Name="InstallDirectory" Type="string" Value="[INSTALLDIR]"/>
     </Component></Directory>
   </Directory>
   <Feature Id="App" Title="iPad 控制台" Level="1"><ComponentRef Id="AppShortcut"/>${components.map(c=>`<ComponentRef Id="${c}"/>`).join('')}</Feature>
