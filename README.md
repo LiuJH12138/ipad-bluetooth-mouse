@@ -1,10 +1,12 @@
 <h1 align="center">iPad Control Console</h1>
 <p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
 <p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
-<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.2/iPad-Control-Console-1.5.2-win-x64.msi">下载 Windows x64 应用（1.5.2）</a></strong></p>
+<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.3/iPad-Control-Console-1.5.3-win-x64.msi">下载 Windows x64 应用（1.5.3）</a></strong></p>
 <p align="center"><a href="#快速开始">快速开始</a> · <a href="#ai-如何操作-ipad">AI 操作指南</a> · <a href="#如何操作">手动键鼠</a> · <a href="#边界与常见问题">常见问题</a></p>
 
 ![iPad Control Console — 架构示意](docs/overview.svg)
+
+**1.5.3 更新了本机助手控制。** 开启「允许助手控制」后，`assistant.js` 可以点击当前指针位置，也可以按回传 JPEG 的像素坐标点击输入框，再打字、读图核对。分享窗口短暂停止传图时，输入会暂停；同一窗口恢复传图后可沿用原授权。使用 Computer Use 直接点投屏时，这个开关可以保持关闭。[操作指南](#ai-如何操作-ipad) · [真机实测记录](https://github.com/LiuJH12138/ipad-bluetooth-mouse/blob/v1.5.3/docs/validation.md)
 
 ## 这个项目做什么
 
