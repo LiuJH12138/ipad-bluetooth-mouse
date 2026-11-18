@@ -8,46 +8,17 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="masthead">
-    <h1><img src="/console.ico" width="28" height="28" alt="">iPad 控制台</h1>
-  </header>
   <main class="workspace">
-    <section id="monitor" class="monitor" aria-labelledby="preview-heading">
-      <header class="monitor-head">
-        <h2 id="preview-heading"><i id="video-dot" aria-hidden="true"></i>iPad 屏幕</h2>
-        <button id="fullscreen" aria-controls="monitor" hidden>全屏</button>
+    <aside id="inspector" class="inspector" aria-label="设备连接和设置">
+      <header class="masthead">
+        <h1><img src="/console.ico" width="28" height="28" alt="">iPad 控制台</h1>
       </header>
-      <div id="stage">
-        <canvas id="usb-canvas" tabindex="-1" hidden aria-label="iPad USB 实时画面"></canvas>
-        <textarea id="picture-keyboard" tabindex="-1" aria-label="iPad 画面键盘" autocomplete="off" autocapitalize="off" spellcheck="false" disabled></textarea>
-        <video id="video" autoplay muted playsinline aria-label="共享窗口实时画面"></video>
-        <div id="placeholder">
-          <div class="device" aria-hidden="true"><i></i></div>
-          <h3>连接你的 iPad</h3>
-          <p>用数据线连接电脑，并解锁 iPad。</p>
-          <button id="usb" class="primary">USB 直连</button>
-        </div>
-      </div>
-      <div id="transport" class="transport" hidden>
-        <div class="transport-state"><span id="mode-label">预览模式</span><small id="transport-position"></small></div>
-        <div class="actions">
-          <div class="modes" aria-label="操控方式" role="group">
-            <button id="point" aria-pressed="false" title="直接点击投屏里的目标">画面操控</button>
-            <button id="control" title="捕获电脑鼠标和键盘，按 Esc 释放">开始键鼠控制</button>
-            <button id="release" hidden>结束控制</button>
-          </div>
-          <button id="assistant" aria-pressed="false" title="允许本机助手读图和发送键鼠操作">允许助手控制</button>
-        </div>
-      </div>
-      <p id="fullscreen-error" role="status"></p>
-    </section>
-    <aside class="inspector" aria-label="设备连接和设置">
       <section class="panel" aria-labelledby="connections-heading">
         <h2 id="connections-heading">设备连接</h2>
         <dl class="readings">
-          <div><dt>投屏</dt><dd id="source-status">未连接</dd></div>
-          <div><dt>蓝牙</dt><dd id="bluetooth-status">未连接</dd></div>
-          <div id="keyboard-row" hidden><dt>键盘</dt><dd id="keyboard-status">未连接</dd></div>
+          <div><dt><span class="row-symbol display-symbol" aria-hidden="true"></span>投屏</dt><dd><i id="video-dot" aria-hidden="true"></i><span id="source-status">未连接</span></dd></div>
+          <div><dt><span class="row-symbol bluetooth-symbol" aria-hidden="true"><svg width="14" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12-6 4V2l6 4L6 18"/></svg></span>蓝牙</dt><dd id="bluetooth-status">未连接</dd></div>
+          <div id="keyboard-row" hidden><dt><span class="row-symbol keyboard-symbol" aria-hidden="true"></span>键盘</dt><dd id="keyboard-status">未连接</dd></div>
         </dl>
         <div class="row-actions">
           <button id="connect">连接蓝牙</button>
@@ -73,13 +44,48 @@
       </section>
       <details class="panel settings">
         <summary>键鼠设置</summary>
-        <label class="check"><input id="command-control" type="checkbox" checked>将 Ctrl 映射为 iPad Command</label>
+        <label class="check"><span>将 Ctrl 映射为 iPad Command</span><input id="command-control" type="checkbox" role="switch" checked></label>
         <label class="range-label" for="speed">捕获模式指针速度 <output for="speed" id="speed-value">1.0×</output></label>
         <input id="speed" type="range" min="0.2" max="2" step="0.1" value="1">
         <p class="hint">输入拼音时，电脑使用英文输入法，在 iPad 上选字。</p>
       </details>
-      <p id="notice" role="status" aria-live="polite"></p>
     </aside>
+    <section id="monitor" class="monitor" aria-labelledby="preview-heading">
+      <header class="monitor-head">
+        <div class="window-title">
+          <button id="toggle-inspector" aria-label="收起设备侧栏" title="收起设备侧栏" aria-controls="inspector" aria-expanded="true"><span aria-hidden="true"></span></button>
+          <h2 id="preview-heading">iPad 屏幕</h2>
+        </div>
+        <button id="fullscreen" aria-controls="monitor" hidden>全屏</button>
+      </header>
+      <div id="stage">
+        <canvas id="usb-canvas" tabindex="-1" hidden aria-label="iPad USB 实时画面"></canvas>
+        <textarea id="picture-keyboard" tabindex="-1" aria-label="iPad 画面键盘" autocomplete="off" autocapitalize="off" spellcheck="false" disabled></textarea>
+        <video id="video" autoplay muted playsinline aria-label="共享窗口实时画面"></video>
+        <div id="placeholder">
+          <div class="pairing-art" aria-hidden="true">
+            <div class="tablet"><div class="tablet-display"><i></i><b></b><em></em></div></div>
+            <div class="usb-cable"></div>
+          </div>
+          <h3>连接你的 iPad</h3>
+          <p>用数据线连接电脑，并解锁 iPad。</p>
+          <button id="usb" class="primary">USB 直连</button>
+        </div>
+      </div>
+      <div id="transport" class="transport" hidden>
+        <div class="transport-state"><span id="mode-label">预览模式</span><small id="transport-position"></small></div>
+        <div class="actions">
+          <div class="modes" aria-label="操控方式" role="group">
+            <button id="point" aria-pressed="false" title="直接点击投屏里的目标">画面操控</button>
+            <button id="control" title="捕获电脑鼠标和键盘，按 Esc 释放">开始键鼠控制</button>
+            <button id="release" hidden>结束控制</button>
+          </div>
+          <button id="assistant" aria-pressed="false" title="允许本机助手读图和发送键鼠操作">允许助手控制</button>
+        </div>
+      </div>
+      <p id="fullscreen-error" role="status"></p>
+      <p id="notice" role="status" aria-live="polite"></p>
+    </section>
   </main>
   <script src="/usb-video.js"></script>
   <script src="/keyboard.js"></script>

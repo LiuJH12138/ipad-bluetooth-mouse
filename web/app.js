@@ -101,6 +101,19 @@ function hasPicture() {
 }
 function ready() { return connected && hasPicture(); }
 const monitor = $('monitor');
+const inspectorButton = $('toggle-inspector');
+function setSidebarVisible(visible) {
+  const sidebar = $('inspector');
+  if (!visible && sidebar.contains(document.activeElement)) inspectorButton.focus();
+  sidebar.hidden = !visible;
+  inspectorButton.setAttribute('aria-expanded', String(visible));
+  inspectorButton.title = visible ? '收起设备设置' : '显示设备设置';
+  inspectorButton.setAttribute('aria-label', inspectorButton.title);
+}
+inspectorButton.onclick = () => setSidebarVisible($('inspector').hidden);
+const compactWindow = window.matchMedia('(max-width: 760px)');
+setSidebarVisible(!compactWindow.matches);
+compactWindow.addEventListener('change', event => setSidebarVisible(!event.matches));
 const fullscreenButton = $('fullscreen');
 fullscreenButton.hidden = !document.fullscreenEnabled;
 fullscreenButton.onclick = async () => {

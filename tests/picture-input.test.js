@@ -10,6 +10,7 @@ const IpadKeyboard = require('../web/keyboard');
 const app = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
 
 class Control extends EventTarget {
+  contains(node) { return node === this; }
   classList = {toggle() {}, add() {}, remove() {}};
   setAttribute(name, value) { this[name] = value; }
   setPointerCapture(id) { this.captured = id; }
@@ -42,6 +43,7 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
     body: new Control(), getElementById: element, createElement: () => new Control()
   });
   const window = new EventTarget();
+  window.matchMedia = () => Object.assign(new EventTarget(), {matches: false});
   const timers = new Map();
   const output = {targets: [], heldTargets: [], reports: [], stops: 0, physicalButtons: 0, lease: null};
   async function fetch(url, options) {
