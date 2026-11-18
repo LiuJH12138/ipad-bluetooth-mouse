@@ -23,10 +23,15 @@ function update() {
   $('control').disabled = !ready() || !!document.pointerLockElement; $('connect').disabled = connected;
   $('release').disabled = !lease; $('search').disabled = !ready() || !keyboardConnected;
   $('disconnect').disabled = !connected; $('snapshot').disabled = !hasPicture();
+  $('connect').hidden = connected;
+  $('disconnect').hidden = !connected;
+  $('release').hidden = !lease;
+  $('control').hidden = !!document.pointerLockElement && !!lease;
   for (const id of ['tap','up','down']) $(id).disabled = !ready();
   $('stop-share').disabled = !stream && !usbSession;
+  $('stop-share').hidden = $('stop-share').disabled;
   $('usb').disabled = !!usbSession;
-  $('mode-label').textContent = document.pointerLockElement ? '键鼠控制中 · Esc 退出' : lease ? '触控板控制中' : '预览模式';
+  $('mode-label').textContent = document.pointerLockElement ? '键鼠控制中' : lease ? '触控板控制中' : '预览模式';
   document.body.classList.toggle('controlling', !!lease);
 }
 async function clearFrame() { frameEpoch++; try { await api('frame/clear', {}); } catch {} }
@@ -71,14 +76,14 @@ async function stopShare() {
   usbCanvas.width = usbCanvas.height = 1;
   await stopControl();
   if (stream) stream.getTracks().forEach(t => t.stop()); stream = null; video.srcObject = null;
-  video.classList.remove('active'); $('placeholder').hidden = false; $('video-dot').classList.remove('on'); $('video-status').textContent = '等待选择画面';
+  video.classList.remove('active'); $('placeholder').hidden = false; $('video-dot').classList.remove('on'); $('video-status').textContent = '等待画面';
   $('frames').checked = false; await clearFrame(); update();
 }
 $('share').onclick = async () => {
   try {
     const selected = await navigator.mediaDevices.getDisplayMedia({ video: { displaySurface: 'window', frameRate: { ideal: 30, max: 30 } }, audio: false, selfBrowserSurface: 'exclude', surfaceSwitching: 'exclude' });
     await stopShare(); stream = selected; video.srcObject = stream; await video.play();
-    video.classList.add('active'); $('placeholder').hidden = true; $('video-dot').classList.add('on'); $('video-status').textContent = '画面已接入';
+    video.classList.add('active'); $('placeholder').hidden = true; $('video-dot').classList.add('on'); $('video-status').textContent = '窗口共享中';
     stream.getVideoTracks()[0].addEventListener('ended', stopShare, { once: true });
     stream.getVideoTracks()[0].addEventListener('mute', () => { stopControl(); notice('共享画面已暂停，控制已释放。', true); });
     notice('画面已接入。确认显示的是 iPad，再连接蓝牙。'); update();
@@ -118,7 +123,7 @@ $('usb').onclick = async () => {
     if (usbSession === session) await stopShare();
   }
 };
-$('stop-share').onclick = stopShare;
+$('stop-share').onclick = async () => { await stopShare(); notice('已停止投屏'); };
 $('connect').onclick = async () => { try { $('connect').disabled = true; await api('connect', {}); notice('正在启动蓝牙，iPad 配对成功后会显示已连接。'); } catch(e) { notice(e.message,true); $('connect').disabled = false; } };
 $('disconnect').onclick = async () => { await stopControl(); try { await api('disconnect', {}); connected = false; update(); } catch(e) { notice(e.message,true); } };
 $('control').onclick = async () => {
@@ -168,7 +173,7 @@ setInterval(async () => { if(lease) try { await api('heartbeat',{lease}); } catc
 setInterval(async () => {
   try {
     const status=await api('status'); connected=status.active===1; keyboardConnected=status.keyboardActive===1;
-    $('keyboard-status').textContent = keyboardConnected ? '键盘已连接' : connected ? '鼠标已连接，键盘需重新配对' : '键盘尚未连接';
+    $('keyboard-status').textContent = keyboardConnected ? '已连接' : connected ? '需重新配对' : '尚未连接';
     const text={idle:'尚未启动',starting:'正在启动蓝牙…',waiting:'等待 iPad 连接',connected:'已连接 · 1 台 iPad',error:'启动失败，可点击连接重试'};
     $('bluetooth-status').textContent=text[status.state] || status.state;
     if(status.error) notice(status.error,true);
