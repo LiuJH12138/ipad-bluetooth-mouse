@@ -11,3 +11,9 @@ logs/
 .env.*
 desktop.ini
 Thumbs.db
+
+build/
+
+# Ephemeral local credentials, frames and server logs
+.local/
+node_modules/

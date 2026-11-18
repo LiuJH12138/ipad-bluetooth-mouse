@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>iPad 控制台</title><link rel="stylesheet" href="/style.css"></head>
+<body><main>
+<header><div><span class="eyebrow">IPAD / LOCAL CONTROL</span><h1>一个窗口，连接你的 iPad。</h1><p>电脑键盘、鼠标与 iPad 画面，在这里汇合。</p></div><span class="local">● 仅在本机运行</span></header>
+<div class="workspace"><section class="screen-card"><div class="screen-bar"><span><i id="video-dot"></i> <span id="video-status">等待选择画面</span></span><span id="mode-label">预览模式</span></div>
+<div id="stage"><video id="video" autoplay muted playsinline></video><div id="placeholder"><div class="tablet">↗</div><h2>让 iPad 出现在这里</h2><p>先在爱思中打开 USB 投屏<br>再点击右侧「选择投屏窗口」</p></div></div>
+<div class="screen-footer"><span>看 iPad 的圆形指针来定位</span><span><kbd>Esc</kbd> 随时退出鼠标控制</span></div></section>
+<aside><section class="card"><span class="step">01 / 画面</span><h2>接入实时投屏</h2><p>在浏览器弹窗中选择爱思的 iPad 预览窗口。</p><button id="share" class="primary">选择投屏窗口</button><button id="stop-share" class="quiet" disabled>停止共享</button></section>
+<section class="card"><span class="step">02 / 蓝牙</span><h2>连接 iPad 键鼠</h2><p id="bluetooth-status">尚未启动</p><p id="keyboard-status" class="small">键盘尚未连接</p><div class="button-row"><button id="connect">连接蓝牙</button><button id="disconnect" class="quiet" disabled>断开</button></div><p class="small">首次使用时，在 iPad 蓝牙设置中连接这台电脑。</p></section>
+<section class="card"><span class="step">03 / 操作</span><h2>把键鼠交给 iPad</h2><button id="control" class="primary" disabled>开始键鼠控制</button><p class="small">开始后直接使用键盘和鼠标，Esc 结束。电脑切到英文输入法，中文由 iPad 输入法转换。Win、Alt+Tab 等系统快捷键仍由电脑处理。</p><button id="release" class="quiet" disabled>结束控制</button><label class="check"><input id="command-control" type="checkbox" checked>Ctrl 映射为 iPad Command</label><label class="range-label">移动速度 <input id="speed" type="range" min="0.2" max="2" step="0.1" value="1"><output id="speed-value">1.0×</output></label></section></aside></div>
+<section class="bottom"><div class="card touch-card"><div><span class="step">TOUCHPAD</span><h2>也可以像触控板一样用</h2><p>拖动移动指针，轻点点击。适合精细调整。</p></div><div id="touchpad" tabindex="0" aria-label="iPad 触控板">拖动移动 · 轻点点击</div><div class="button-row"><button id="search" disabled>打开 iPad 搜索</button><button id="tap" disabled>左键点击</button><button id="up" disabled>向上滚动</button><button id="down" disabled>向下滚动</button></div></div>
+<div class="card ai-card"><span class="step">ASSISTANT VIEW</span><h2>给助手更清晰的视野</h2><label class="check"><input id="frames" type="checkbox">允许本机自动化读取当前画面</label><p class="small">开启后，每秒最多更新 2 张画面到本机服务内存。停止后清空，过期 4 秒自动丢弃，不写入图片文件。</p><p class="small">此服务不上传云端；助手读取后的处理遵循你使用的助手服务规则。</p><button id="snapshot" class="quiet" disabled>保存当前画面 PNG</button></div></section>
+<div id="notice" role="status">先选择画面，再连接蓝牙。两条通道都就绪后即可操作。</div>
+<footer>USB 负责画面 · Bluetooth LE 负责操作 · 无需新增 iPad App</footer>
+</main><script src="/keyboard.js"></script><script src="/app.js"></script></body></html>

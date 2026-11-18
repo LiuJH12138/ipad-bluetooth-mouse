@@ -1,72 +1,168 @@
-<h1 align="center">iPad Bluetooth Mouse</h1>
+<h1 align="center">iPad Control Console</h1>
+<p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
+<p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
+<p align="center"><a href="#快速开始">快速开始</a> · <a href="#如何操作">如何操作</a> · <a href="#助手如何读取画面">助手读取画面</a> · <a href="#边界与常见问题">常见问题</a></p>
 
-<p align="center">
-  从 Windows 用蓝牙控制 iPad 指针的 PowerShell 脚本
-</p>
+![iPad Control Console — 架构示意](docs/overview.svg)
 
-<p align="center">
-  <strong>Windows 11</strong> &nbsp;·&nbsp; <strong>Windows PowerShell 5.1</strong> &nbsp;·&nbsp; <strong>Bluetooth LE HID</strong>
-</p>
+## 这个项目做什么
 
-<p align="center">
-  <a href="#快速开始">快速开始</a> &nbsp;·&nbsp;
-  <a href="#命令">命令</a> &nbsp;·&nbsp;
-  <a href="#常见问题">常见问题</a>
-</p>
+在 Windows 浏览器里查看 iPad 投屏，并通过电脑的键盘、鼠标操作 iPad。浏览器接收你选择的投屏窗口，Windows 通过标准 Bluetooth LE HID 模拟鼠标与键盘。
 
-## 工作方式
+| 能力 | 使用方式 |
+| --- | --- |
+| 实时画面 | 浏览器原生窗口共享，接入现有的爱思 USB 投屏 |
+| 直接键鼠控制 | 点击「开始键鼠控制」，移动、点击、拖动、滚动、输入；`Esc` 退出 |
+| 精细调整 | 备用触控板、左键与滚动按钮 |
+| Windows 键位习惯 | 可将 `Ctrl` 映射到 iPad 的 `Command` |
+| 助手视野 | 可选开启本机帧接口，读取短时有效的 JPEG 图像 |
+| 独立脚本 | 保留 PowerShell 命令行控制方式 |
 
-脚本让 Windows 电脑以标准低功耗蓝牙鼠标的身份广播。iPad 配对后，可以接收移动、左键点击和滚轮命令。想在电脑上看实时画面时，再打开自己熟悉的投屏工具。
-
-```mermaid
-flowchart LR
-    Windows["Windows PowerShell"] -->|"蓝牙 LE HID · 移动 / 点击 / 滚动"| iPad["iPad"]
-    iPad -->|"可选 · USB 或 AirPlay"| Preview["Windows 投屏窗口"]
-```
-
-适合已经能投屏、还想从 Windows 发出鼠标操作的场景。蓝牙控制在两台设备之间传输，脚本使用 Windows 自带的 WinRT 接口，无需额外安装控制端或 iPad App。
-
-## 准备
-
-- 一台运行 **Windows 11** 的电脑，蓝牙适配器需支持 **Bluetooth LE 外设角色**。仅支持扫描和连接其他设备的适配器可能无法广播。
-- 一台可连接蓝牙鼠标的 iPad。运行时打开两端蓝牙，保持 iPad 解锁并处于蓝牙覆盖范围内。 [Apple 蓝牙鼠标连接指南](https://support.apple.com/zh-cn/108938)
-- 使用系统自带的 **Windows PowerShell 5.1**（`powershell.exe`）。可选投屏工具可单独使用，例如 [爱思投屏](https://www.i4.cn/pro_screen.html) 的 USB 投屏。
+**不需要额外的 iPad 控制 App，不需要 npm 安装依赖。** 画面仍由已有投屏软件提供，本项目不实现 AirPlay 或 USB 视频协议。
 
 ## 快速开始
 
-1. 下载仓库里的 [IpadBluetoothMouse.ps1](IpadBluetoothMouse.ps1)，在脚本所在目录运行：
+### 准备
 
-   ```powershell
-   powershell.exe -NoProfile -File .\IpadBluetoothMouse.ps1
-   ```
+- Windows 11，蓝牙适配器支持 **BLE 外设角色**。
+- Windows 自带的 **PowerShell 5.1**。
+- **Node.js 22 或更新版本**；本机验证使用 Node.js 26。
+- Chrome 或 Edge 桌面浏览器。
+- iPad 已解锁，蓝牙开启，能连接标准蓝牙鼠标和键盘。
+- 在 [爱思投屏](https://www.i4.cn/pro_screen.html) 中打开 iPad 的 USB 实时预览。
 
-2. 看到 `READY` 后，在 iPad 的「设置 → 蓝牙」中选择脚本显示的 Windows 电脑名。若 Windows 弹出「添加设备」，在两端核对配对码后确认。
-3. 在脚本窗口输入 `status`。看到 `active mouse connections: 1` 后，输入 `move 40 0` 检查指针是否向右移动，再把指针移到目标上输入 `click`。
-4. 输入 `quit` 结束脚本并停止广播。
+### 启动
 
-## 命令
+1. 将整个仓库下载到本地，解压。
+2. 双击 **`Start-IpadConsole.cmd`**。启动器在后台启动本机服务，并打开控制页面。
+3. 点击 **「选择投屏窗口」**，在浏览器的「窗口」标签中选择真正显示 iPad 画面的爱思预览，再点击分享。
+4. 点击 **「连接蓝牙」**。首次使用时，在 iPad「设置 → 蓝牙」中选择这台 Windows 电脑的名称，并核对两端配对提示。
+5. 页面显示鼠标、键盘均已连接后，点击 **「开始键鼠控制」**。如浏览器请求鼠标捕获，按提示允许。
+6. 按 **`Esc`** 把键鼠还给电脑。
 
-| 命令 | 操作 | 示例 |
-| --- | --- | --- |
-| `status` | 查看广播、订阅和活动连接状态 | `status` |
-| `move X Y` | 相对移动指针。正值分别向右和向下 | `move 40 -20` |
-| `click` | 在指针当前位置左键点击 | `click` |
-| `scroll N` | 发送垂直滚轮输入 | `scroll -3` |
-| `quit` | 停止广播并退出 | `quit` |
+也可以从项目目录启动：
 
-移动和滚轮的每个参数都接受 `-127` 到 `127` 的整数。实际移动距离会受 iPad 的指针速度设置影响。
+```powershell
+powershell.exe -NoProfile -File .\Start-IpadConsole.ps1
+```
 
-## 常见问题
+浏览器的画面选择授权由用户完成，每次重新打开或刷新页面都需要重新选择。蓝牙配对通常可复用。
 
-| 现象 | 处理办法 |
+## 如何操作
+
+- **移动与点击**：开启控制后，电脑鼠标发送相对位移，左键、拖动和滚轮转发到 iPad。看 iPad 自己的指针定位，可以用页面的速度滑块调整。
+- **键盘输入**：开启控制后转发物理键位。支持字母、数字、标点、方向键、Tab、Enter、Backspace 和修饰键。采用标准六键同时按下报告。
+- **中文输入**：电脑先切到英文输入法，中文转换由 iPad 上的输入法完成。本项目不复制电脑输入法的候选词或剪贴板。
+- **快捷键**：默认将电脑 `Ctrl` 映射成 iPad `Command`，可取消勾选。「打开 iPad 搜索」发送 `Command + Space`。
+- **退出与恢复**：`Esc`、切走窗口、页面隐藏或停止共享会释放控制。服务在控制心跳中断超过约 1.2 秒后丢弃待发输入并尝试释放按键。
+- **备用触控板**：拖动移动，轻点点击；无需捕获电脑鼠标。
+
+`Esc` 保留给退出控制。Windows 与浏览器保留的系统快捷键（例如 Win、Alt+Tab、Ctrl+Alt+Del）不能保证转发。鼠标是相对控制，尚不支持按图像坐标直接定位，也不模拟多点触摸或 Apple Pencil。
+
+## 工作原理
+
+```mermaid
+flowchart LR
+    I["iPad"] -->|"USB 投屏"| M["现有投屏软件"]
+    M -->|"浏览器授权的窗口共享"| B["本机控制页面"]
+    B -->|"键鼠事件 / 会话令牌"| N["127.0.0.1 Node 服务"]
+    N -->|"有序命令队列"| P["Windows PowerShell / WinRT"]
+    P -->|"Bluetooth LE HID 鼠标 + 键盘"| I
+    B -.->|"可选 · 短时图像"| N
+    N -.->|"经授权的本机读取"| A["助手 / 自动化工具"]
+```
+
+这里把问题分成画面、输入和使用界面三部分。成熟投屏软件负责视频协议，标准蓝牙 HID 负责输入，本地网页负责把两者组织成一个可操作的界面。没有修改爱思程序，也没有注入或重挂它的窗口。
+
+## 助手如何读取画面
+
+默认关闭。在页面勾选 **「允许本机自动化读取当前画面」** 后：
+
+- 最多每秒更新两帧，最长边按宽度上限 1600 像素缩放。
+- 服务仅在内存保留最近一帧，4 秒后失效；关闭开关或停止共享后清空。
+- `GET /api/frame` 返回 JPEG，响应头 `X-Frame-Age-Ms` 表示帧进入本机服务后的年龄。
+- 接口使用启动时生成的令牌；运行信息位于已被 Git 忽略的 `.local/session.json`。不要上传或分享该文件。
+- 没有可用帧时返回 HTTP 404，不会冒充实时画面。
+
+帧年龄不是 iPad 视频端到端延迟。若投屏软件自身冻结，服务无法仅凭收到的图像证明 iPad 仍在刷新。自动化应结合操作前后的图像变化验证结果。
+
+本项目不把画面上传云端，也不记录按键内容。如果交给助手读取，读取后的处理仍取决于助手服务。浏览器「保存当前画面 PNG」和主动调用接口保存文件属于用户明确发起的本地保存。
+
+## 本机接口
+
+所有 `/api/*` 请求都要求 `X-Control-Token`，服务只绑定 `127.0.0.1`，校验 Host 和 Origin，不开放 CORS。接口用于同机工具，不是互联网远控服务。
+
+| 接口 | 用途 |
 | --- | --- |
-| 启动显示 `Aborted` | 确认 Windows 蓝牙已开启，退出其他脚本实例后重试。持续失败时，检查蓝牙适配器是否支持外设角色。 |
-| iPad 显示「已连接」，但 `status` 显示 0 | 检查 Windows 是否还在等待确认配对。可在 iPad 的「辅助功能 → 触控 → 辅助触控 → 设备」查看指针设备，并重新连接。 |
-| 工具显示画面，点击没有反应 | 在 PowerShell 窗口输入鼠标命令。投屏窗口用于观察画面，脚本通过蓝牙发送输入。 |
-| 出现多台活动设备 | 断开其他设备，让 `status` 只显示 1 台活动鼠标连接。脚本要求活动连接唯一才发送输入。 |
+| `GET /api/status` | 鼠标、键盘、控制租约与图像状态 |
+| `POST /api/connect`、`/api/disconnect` | 启停蓝牙子进程 |
+| `POST /api/control/start` | 取得唯一控制租约 |
+| `POST /api/heartbeat`、`/api/control/stop` | 保活或释放租约 |
+| `POST /api/input` | 有序鼠标 / 键盘报告 |
+| `GET /api/frame` | 读取已获许可且未过期的画面 |
 
-蓝牙指针设备的设置入口可参阅 [Apple 辅助触控指南](https://support.apple.com/zh-cn/111775)。
+输入必须携带当前租约和递增序号。队列会合并相邻鼠标移动，保留按键边沿；积压超过上限会停止控制。服务不接受任意 Shell 命令。
 
-## 实机验证
+## 命令行方式
 
-在 Windows 11 和 iPadOS 17.6.1 上，完成了蓝牙配对、指针移动和左键点击。通过爱思投屏的 USB 预览，确认蓝牙点击打开了 iPad 的「时钟」。脚本还会拒绝超出范围的移动参数；其他系统和适配器组合需要自行验证。
+```powershell
+powershell.exe -NoProfile -File .\IpadBluetoothMouse.ps1
+```
+
+| 命令 | 示例 |
+| --- | --- |
+| 查看连接 | `status` |
+| 相对移动 | `move 40 -20` |
+| 左键点击 | `click` |
+| 滚动 | `scroll -3` |
+| 完整鼠标报告 | `report 1 10 0 0`：左键按住并右移；`report 0 0 0 0`：释放 |
+| 键盘报告 | `keys 2 4`：Shift+A；`keys 0`：释放全部键 |
+| 退出 | `quit` |
+
+移动与滚轮范围为 -127～127。键盘修饰键使用位掩码，普通键为 USB HID usage 4～101，最多 6 个。命令行与网页蓝牙服务不能同时运行，脚本有单实例保护。
+
+## 边界与常见问题
+
+| 现象 | 处理 |
+| --- | --- |
+| 窗口共享中找不到画面 | 先还原爱思预览窗口；选择预览而不是爱思主面板 |
+| 画面黑屏或冻结 | 确认原预览能刷新，再重新共享；暂不依赖最小化窗口的捕获行为 |
+| 鼠标连上，键盘没有连上 | 旧配对可能缓存了鼠标描述符。在 iPad 忽略旧电脑设备，再重新配对组合设备 |
+| 蓝牙启动显示 `Aborted` | 确认电脑蓝牙开启、没有其他脚本实例；稍后重试 |
+| 启动较慢 | 首次 WinRT / 蓝牙初始化可能需要等待，页面会显示启动状态 |
+| 不能进入鼠标捕获 | 点击主控制按钮并允许浏览器提示；检查是否已有其他页面正在控制 |
+| 输入位置不对或没有文字 | 先在 iPad 点中可编辑区域，确认「键盘已连接」，电脑切到英文输入法 |
+| 键盘快捷键回到了 Windows | 属于系统保留组合键；本项目不安装全局键盘钩子 |
+| 找不到 `node.exe` | 安装官方 Node.js 后重开启动器 |
+
+## 验证与开发
+
+```powershell
+node --test
+node --check server.js
+node --check lib/bluetooth.js
+node --check web/app.js
+```
+
+自动测试覆盖访问隔离、控制租约、过期或重复输入、队列积压、鼠标与键盘释放、键位映射，以及图像过期。测试使用模拟蓝牙传输，不替代实机配对和操作验证。
+
+实机进展见 [验证记录](docs/validation.md)。
+
+```text
+IpadBluetoothMouse.ps1   蓝牙 HID 鼠标与键盘
+server.js               仅本机 HTTP 服务与控制租约
+lib/bluetooth.js        子进程、协议解析与有序输入队列
+web/                    控制页面与物理键位映射
+Start-IpadConsole.cmd   双击入口
+Start-IpadConsole.ps1   启动并打开浏览器
+tests/                  不依赖第三方包的自动测试
+.local/                 本地运行信息，禁止提交
+```
+
+## 参考
+
+- [Apple：在 iPad 上使用蓝牙鼠标或触控板](https://support.apple.com/zh-cn/108938)
+- [Apple：iPad 外接键盘快捷键](https://support.apple.com/en-asia/102393)
+- [Chrome：屏幕共享控制](https://developer.chrome.com/docs/web-platform/screen-sharing-controls)
+- [Microsoft：Bluetooth LE 虚拟键盘示例](https://github.com/microsoft/BluetoothLEExplorer/blob/master/BluetoothLEExplorer/BluetoothLEExplorer/Models/VirtualKeyboard.cs)
+- [USB HID Usage Tables](https://www.usb.org/hid)
