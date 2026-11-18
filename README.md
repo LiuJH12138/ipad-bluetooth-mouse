@@ -1,8 +1,8 @@
 <h1 align="center">iPad Control Console</h1>
 <p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
 <p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
-<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.0/iPad-Control-Console-1.5.0-win-x64.msi">下载 Windows x64 应用（1.5.0）</a></strong></p>
-<p align="center"><a href="#快速开始">快速开始</a> · <a href="#如何操作">如何操作</a> · <a href="#助手如何读取画面">助手读取画面</a> · <a href="#边界与常见问题">常见问题</a></p>
+<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.2/iPad-Control-Console-1.5.2-win-x64.msi">下载 Windows x64 应用（1.5.2）</a></strong></p>
+<p align="center"><a href="#快速开始">快速开始</a> · <a href="#ai-如何操作-ipad">AI 操作指南</a> · <a href="#如何操作">手动键鼠</a> · <a href="#边界与常见问题">常见问题</a></p>
 
 ![iPad Control Console — 架构示意](docs/overview.svg)
 
@@ -27,7 +27,7 @@
 
 1. 从页面顶部下载独立窗口版 MSI。若正在使用旧版，先在托盘菜单选择 **退出应用**，再双击 MSI。在中文向导中选择安装目录，点击 **安装** 即可查看进度。完成页默认勾选 **启动 iPad 控制台**，点击 **完成** 会立即打开应用。以后也可从开始菜单打开。应用内置 Node.js 和 USB 采集组件，由自己的 Windows 窗口承载 WebView2。Windows 11 通常自带 Evergreen Runtime；若提示缺少组件，请安装微软提供的 x64 运行时。[WebView2 Runtime 下载](https://developer.microsoft.com/microsoft-edge/webview2/)
 2. 用 USB 数据线接入并解锁 iPad，点 **USB 直连**。新电脑需要先配置 Apple Mobile Device USB 驱动和下文所述的设备过滤驱动。
-3. 点 **连接蓝牙** 并完成首次配对。在 iPad 上打开「设置 → 通用」等静止页面，点 **验证坐标**。显示 **绝对坐标直达** 后，点 **开始键鼠控制**。从源码版切换时，先在旧工作台停止投屏并断开蓝牙，让桌面应用接管设备。
+3. 点 **连接蓝牙** 并完成首次配对。在 iPad 上打开「设置 → 通用」等静止页面，点 **验证坐标**。显示 **绝对坐标直达** 后，就可以用 Windows 箭头点投屏。若想捕获实体鼠标和键盘，点 **开始键鼠控制**。从源码版切换时，先在旧工作台停止投屏并断开蓝牙，让桌面应用接管设备。
 4. 关闭窗口后可以从任务栏通知区域重新打开。右键托盘图标选择 **退出应用** 即可关闭本机服务。在 Windows「设置 → 应用 → 已安装的应用」中可以卸载。
 
 ### 从源码运行
@@ -55,8 +55,7 @@ powershell.exe -NoProfile -File .\Install-UsbReceiver.ps1
 2. 双击 **`Start-IpadConsole.cmd`**。启动器在后台启动本机服务，并打开独立桌面窗口。只有显式运行 `Start-IpadConsole.ps1 -Browser` 时才打开浏览器。
 3. 用数据线接入并解锁 iPad，关闭其他正在使用它的 USB 投屏窗口，点击 **「USB 直连」**。画面出现后，页面会显示帧率与本机解码绘制耗时。
 4. 点击 **「连接蓝牙」**。首次使用时，在 iPad「设置 → 蓝牙」中选择这台 Windows 电脑的名称，并核对两端配对提示。
-5. 页面显示鼠标、键盘均已连接后，在 iPad 上打开背景清晰、静止的页面，点击 **「验证坐标」**。看到 **「绝对坐标直达」** 后点击 **「开始键鼠控制」**。此时圆形指针从画面中央开始，移动电脑鼠标即可瞄准，按左键点选。未验证的设备仍可使用相对鼠标模式。按 **Esc** 退出。
-6. 按 **`Esc`** 把键鼠还给电脑。
+5. 看到鼠标和键盘均已连接后，按下方指南选择操作方式。手动使用时，可选 **画面操控** 或 **开始键鼠控制**，按 **Esc** 退出。
 
 也可以从项目目录直接打开 USB 预览。
 
@@ -65,6 +64,19 @@ powershell.exe -NoProfile -File .\Start-IpadConsole.ps1 -Usb
 ```
 
 蓝牙配对通常可以复用。使用备用的窗口共享模式时，浏览器会要求手动选择窗口。
+
+## AI 如何操作 iPad
+
+先打开控制台，确认能看见 USB 实时画面，并且蓝牙鼠标和键盘均已连接。
+
+| AI 能使用什么 | 由谁操作、在哪里操作 | 「允许助手控制」 |
+| --- | --- | --- |
+| 能用 Computer Use 操作 Windows 窗口 | AI 直接看投屏、点目标、在当前焦点打字 | 保持关闭 |
+| 能在这台 Windows 电脑上执行命令 | AI 运行随附的 `assistant.js` 读取画面、发送键鼠操作 | 用前打开，用完关闭 |
+
+**有 Computer Use。** 在 iPad 打开清晰、静止的页面，点控制台的 **验证坐标**。确认工具栏显示 **画面操控**，就可以让 AI 直接点击投屏里的输入框，然后输入文字或按退格。普通窗口和全屏用法相同。比如让 AI「点搜索框，输入 58，再退格」，最后从 iPad 回传画面核对是否只剩 `5`。
+
+**没有 Computer Use。** 如果正在捕获键鼠，先按 **Esc** 释放。保持投屏，在工具栏点 **允许助手控制**，然后让能执行本机命令的 AI 从安装目录运行 `assistant.js`。先读一帧，操作后再读一帧核对结果，用完点 **停止助手控制**。仅能网页聊天的 AI 还需要能在这台电脑上执行命令的工具。[PowerShell 示例](#本机助手控制)
 
 ## 在投屏画面上使用键鼠
 
@@ -122,19 +134,20 @@ flowchart LR
 
 在实时预览或全屏工具栏点 **允许助手控制**。此时本机助手可以读取画面、移动 iPad 指针、点击、滚动和发送键盘输入。点 **停止助手控制** 即可撤销授权。关闭投屏或超过 4 秒未收到该窗口的画面后，凭据失效。手动键鼠和助手操作共用独占控制，使用助手时请先释放手动键鼠。
 
-在安装目录的 PowerShell 中运行以下命令。源码版可将第一行的程序替换为本机的 node。鼠标位移是相对量，需结合前后画面定位。键盘使用物理键位，文本模式支持英文、数字和空格。
+下面的例子让 iPad 打开系统搜索，输入 `7319`，然后保存一帧供助手核对。在安装目录打开 PowerShell；源码版在项目目录运行，并将第一行改为 `$node = 'node'`。
 
 ```powershell
 $node = '.\runtime\node.exe'
 & $node assistant.js status
 & $node assistant.js frame "$env:TEMP\ipad-frame.jpg"
-& $node assistant.js move 40 -20
-& $node assistant.js click
-& $node assistant.js scroll 3
 & $node assistant.js search
+& $node assistant.js frame "$env:TEMP\ipad-search.jpg"
+# Inspect the image and confirm the search field is ready before typing.
 & $node assistant.js type 7319
-& $node assistant.js key Backspace
+& $node assistant.js frame "$env:TEMP\ipad-result.jpg"
 ```
+
+让助手打开生成的 JPEG 核对输入框和文字。画面最多每秒更新两次，如果仍是操作前的画面，可再取一帧。`move 40 -20` 表示从当前指针向右、向上相对移动，`click` 点击当前位置，`scroll 3` 发送滚轮输入。`type` 每次接受 1 至 120 个英文字母、数字或空格；退格用 `key Backspace`。这些子命令都跟在 `assistant.js` 后面。
 
 ## 助手如何读取画面
 
@@ -152,7 +165,7 @@ $node = '.\runtime\node.exe'
 
 ## 本机接口
 
-所有 `/api/*` 请求都要求 `X-Control-Token`，服务只绑定 `127.0.0.1`，校验 Host 和 Origin，不开放 CORS。接口用于同机工具，不是互联网远控服务。
+控制台请求使用 `X-Control-Token`，随附的 `assistant.js` 自动为授权范围内的请求提供 `X-Assistant-Token`。服务只绑定 `127.0.0.1`，校验 Host 和 Origin，供同机工具访问。
 
 | 接口 | 用途 |
 | --- | --- |
