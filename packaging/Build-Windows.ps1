@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $out = Join-Path $root 'build'
 $toolsDir = Join-Path $out 'tooling'
@@ -23,7 +23,7 @@ if ((& $node -p 'process.arch') -ne 'x64' -or [int](& $node -p "process.versions
 if ((Get-AuthenticodeSignature $node).Status -ne 'Valid') { throw 'The build requires a signed Node.js runtime' }
 Copy-Item $node "$stage/runtime/node.exe"
 Copy-Item (Join-Path (Split-Path $node) 'LICENSE') "$stage/licenses/Node-LICENSE.txt"
-foreach ($f in 'server.js','IpadBluetoothMouse.ps1','README.md') { Copy-Item (Join-Path $root $f) $stage }
+foreach ($f in 'server.js','assistant.js','IpadBluetoothMouse.ps1','README.md') { Copy-Item (Join-Path $root $f) $stage }
 foreach ($f in (git -C $root ls-files -- web lib docs/overview.svg)) {
     $target = Join-Path $stage $f
     $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
@@ -55,16 +55,12 @@ function Write-WizardBitmap($Name, $Height, [Drawing.Rectangle]$Placement) {
 }
 Write-WizardBitmap 'welcome' 312 ([Drawing.Rectangle]::new(12,80,140,140))
 Write-WizardBitmap 'banner' 58 ([Drawing.Rectangle]::new(431,3,52,52))
-$csc = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
-$launcher = Join-Path $stage 'iPadControlConsole.exe'
-$source = Join-Path $PSScriptRoot 'Launcher.cs'
-& $csc /nologo /target:winexe /platform:x64 /codepage:65001 /optimize+ /reference:System.Windows.Forms.dll /reference:System.Drawing.dll "/win32icon:$iconPath" "/out:$launcher" $source
-Check 'Compile the desktop launcher'
+& "$PSScriptRoot/Build-DesktopHost.ps1" -Destination $stage
 & $node "$PSScriptRoot/installer.js" $stage "$work/installer.wxs" $iconPath
 Check 'Generate the installer manifest'
 & "$wix/candle.exe" -nologo -out "$work/installer.wixobj" "$work/installer.wxs"
 Check 'Compile the installer'
-$package = Join-Path $out 'iPad-Control-Console-1.1.0-win-x64.msi'
+$package = Join-Path $out 'iPad-Control-Console-1.2.0-win-x64.msi'
 & "$wix/light.exe" -nologo -spdb -ext "$wix/WixUIExtension.dll" -cultures:zh-CN -out $package "$work/installer.wixobj"
 Check 'Link and validate the installer'
 (Get-FileHash $package).Hash.ToLowerInvariant() + '  ' + (Split-Path $package -Leaf) | Set-Content -Encoding ascii "$package.sha256"

@@ -1,18 +1,18 @@
 <h1 align="center">iPad Control Console</h1>
 <p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
 <p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
-<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.1.0/iPad-Control-Console-1.1.0-win-x64.msi">下载 Windows x64 应用</a></strong></p>
+<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.2.0/iPad-Control-Console-1.2.0-win-x64.msi">下载 Windows x64 应用（1.2.0）</a></strong></p>
 <p align="center"><a href="#快速开始">快速开始</a> · <a href="#如何操作">如何操作</a> · <a href="#助手如何读取画面">助手读取画面</a> · <a href="#边界与常见问题">常见问题</a></p>
 
 ![iPad Control Console — 架构示意](docs/overview.svg)
 
 ## 这个项目做什么
 
-用一根 USB 数据线把 iPad 画面送到 Windows 浏览器，再用电脑的键盘和鼠标操作 iPad。视频走 USB，键鼠走标准蓝牙 HID，两条通道在同一页面汇合。
+用一根 USB 数据线把 iPad 画面送到 Windows 桌面控制台，再用电脑的键盘和鼠标操作 iPad。视频走 USB，键鼠走标准蓝牙 HID，两条通道在同一窗口汇合。
 
 | 能力 | 使用方式 |
 | --- | --- |
-| 实时画面 | USB 直接接收 iPad 的 H.264 视频，Chrome 或 Edge 就地解码 |
+| 实时画面 | USB 直接接收 iPad 的 H.264 视频，桌面窗口通过 WebCodecs 就地解码 |
 | 直接键鼠控制 | 点击「开始键鼠控制」，移动、点击、拖动、滚动、输入；`Esc` 退出 |
 | 精细调整 | 备用触控板、左键与滚动按钮 |
 | Windows 键位习惯 | 可将 `Ctrl` 映射到 iPad 的 `Command` |
@@ -25,7 +25,7 @@
 
 ### Windows 应用
 
-1. 下载并双击页面顶部的 MSI。在中文向导中选择安装目录，点击 **安装** 即可查看进度。完成页默认勾选 **启动 iPad 控制台**，点击 **完成** 会立即打开应用。以后也可从开始菜单打开。应用内置 Node.js 和 USB 采集组件，使用已有的 Edge 或 Chrome 显示独立窗口。
+1. 从页面顶部下载独立窗口版 MSI。若正在使用旧版，先在托盘菜单选择 **退出应用**，再双击 MSI。在中文向导中选择安装目录，点击 **安装** 即可查看进度。完成页默认勾选 **启动 iPad 控制台**，点击 **完成** 会立即打开应用。以后也可从开始菜单打开。应用内置 Node.js 和 USB 采集组件，由自己的 Windows 窗口承载 WebView2。Windows 11 通常自带 Evergreen Runtime；若提示缺少组件，请安装微软提供的 x64 运行时。[WebView2 Runtime 下载](https://developer.microsoft.com/microsoft-edge/webview2/)
 2. 用 USB 数据线接入并解锁 iPad，点 **USB 直连**。新电脑需要先配置 Apple Mobile Device USB 驱动和下文所述的设备过滤驱动。
 3. 点 **连接蓝牙**，在 iPad 上完成首次配对后点 **开始键鼠控制**。从源码版切换时，先在旧工作台停止投屏并断开蓝牙，让桌面应用接管设备。
 4. 关闭窗口后可以从任务栏通知区域重新打开。右键托盘图标选择 **退出应用** 即可关闭本机服务。在 Windows「设置 → 应用 → 已安装的应用」中可以卸载。
@@ -35,7 +35,7 @@
 - Windows 11，蓝牙适配器支持 **BLE 外设角色**。
 - Windows 自带的 **PowerShell 5.1**。
 - **Node.js 22 或更新版本**；本机验证使用 Node.js 26。
-- Chrome 或 Edge 桌面浏览器。
+- Microsoft WebView2 Evergreen Runtime。首次从源码启动时会下载并校验固定版本的 WebView2 SDK，编译结果缓存在 build 目录。
 - iPad 已解锁，蓝牙开启，能连接标准蓝牙鼠标和键盘。
 - 一根支持数据传输的 USB 线。首次连接时，在 iPad 上确认信任电脑。
 
@@ -52,7 +52,7 @@ powershell.exe -NoProfile -File .\Install-UsbReceiver.ps1
 ### 启动
 
 1. 将整个仓库下载到本地，解压。
-2. 双击 **`Start-IpadConsole.cmd`**。启动器在后台启动本机服务，并打开控制页面。
+2. 双击 **`Start-IpadConsole.cmd`**。启动器在后台启动本机服务，并打开独立桌面窗口。只有显式运行 `Start-IpadConsole.ps1 -Browser` 时才打开浏览器。
 3. 用数据线接入并解锁 iPad，关闭其他正在使用它的 USB 投屏窗口，点击 **「USB 直连」**。画面出现后，页面会显示帧率与本机解码绘制耗时。
 4. 点击 **「连接蓝牙」**。首次使用时，在 iPad「设置 → 蓝牙」中选择这台 Windows 电脑的名称，并核对两端配对提示。
 5. 页面显示鼠标、键盘均已连接后，点击 **「开始键鼠控制」**。如浏览器请求鼠标捕获，按提示允许。
@@ -85,7 +85,7 @@ powershell.exe -NoProfile -File .\Start-IpadConsole.ps1 -Usb
 flowchart LR
     I["iPad"] -->|"USB · H.264"| M["USB 采集组件"]
     M -->|"本机视频流"| N["127.0.0.1 Node 服务"]
-    N -->|"原始码流"| B["浏览器 · WebCodecs 解码与显示"]
+    N -->|"原始码流"| B["Windows 窗口 · WebView2 / WebCodecs 解码与显示"]
     B -->|"键鼠事件 / 会话令牌"| N["127.0.0.1 Node 服务"]
     N -->|"有序命令队列"| P["Windows PowerShell / WinRT"]
     P -->|"Bluetooth LE HID 鼠标 + 键盘"| I
@@ -93,7 +93,25 @@ flowchart LR
     N -.->|"经授权的本机读取"| A["助手 / 自动化工具"]
 ```
 
-采集组件通过 USB 接收 iPad 编码好的视频。本机服务原样转发，浏览器在低延迟模式下解码并绘制。这样省去了桌面窗口捕获和二次编码。键鼠独立通过蓝牙返回 iPad。
+采集组件通过 USB 接收 iPad 编码好的视频。本机服务原样转发，窗口中的 WebView2 在低延迟模式下解码并绘制。这样省去了桌面窗口捕获和二次编码。键鼠独立通过蓝牙返回 iPad。
+
+## 本机助手控制
+
+在实时预览或全屏工具栏点 **允许助手控制**。此时本机助手可以读取画面、移动 iPad 指针、点击、滚动和发送键盘输入。点 **停止助手控制** 即可撤销授权。关闭投屏或超过 4 秒未收到该窗口的画面后，凭据失效。手动键鼠和助手操作共用独占控制，使用助手时请先释放手动键鼠。
+
+在安装目录的 PowerShell 中运行以下命令。源码版可将第一行的程序替换为本机的 node。鼠标位移是相对量，需结合前后画面定位。键盘使用物理键位，文本模式支持英文、数字和空格。
+
+```powershell
+$node = '.\runtime\node.exe'
+& $node assistant.js status
+& $node assistant.js frame "$env:TEMP\ipad-frame.jpg"
+& $node assistant.js move 40 -20
+& $node assistant.js click
+& $node assistant.js scroll 3
+& $node assistant.js search
+& $node assistant.js type 7319
+& $node assistant.js key Backspace
+```
 
 ## 助手如何读取画面
 
@@ -153,17 +171,18 @@ powershell.exe -NoProfile -File .\IpadBluetoothMouse.ps1
 | 鼠标连上，键盘没有连上 | 旧配对可能缓存了鼠标描述符。在 iPad 忽略旧电脑设备，再重新配对组合设备 |
 | 蓝牙启动显示 `Aborted` | 确认电脑蓝牙开启、没有其他脚本实例；稍后重试 |
 | 启动较慢 | 首次 WinRT / 蓝牙初始化可能需要等待，页面会显示启动状态 |
-| 不能进入鼠标捕获 | 点击主控制按钮并允许浏览器提示；检查是否已有其他页面正在控制 |
+| 不能进入鼠标捕获 | 点击主控制按钮并允许窗口中的权限提示；检查是否已有其他页面正在控制 |
 | 输入位置不对或没有文字 | 先在 iPad 点中可编辑区域，确认「键盘已连接」，电脑切到英文输入法 |
 | 键盘快捷键回到了 Windows | 属于系统保留组合键；本项目不安装全局键盘钩子 |
 | 找不到 `node.exe` | 安装官方 Node.js 后重开启动器 |
 
 ## 验证与开发
 
-在 Windows x64 上使用 PowerShell 7 运行 `./packaging/Build-Windows.ps1` 可生成 MSI 和 SHA-256 文件，输出位于 `build/`。构建使用 Git、已登录的 GitHub CLI、签名的 x64 Node.js 及其随附 LICENSE、Windows .NET Framework 编译器和 WiX 3.14.1。脚本会下载固定版本的 WiX、USB 运行库、对应源码和许可。安装包中的 `licenses/` 包含 Node.js 许可证及 USB 组件的上游资料。
+在 Windows x64 上使用 PowerShell 7 运行 `./packaging/Build-Windows.ps1` 可生成 MSI 和 SHA-256 文件，输出位于 `build/`。构建使用 Git、已登录的 GitHub CLI、签名的 x64 Node.js 及其随附 LICENSE、Windows .NET Framework 编译器和 WiX 3.14.1。脚本会下载固定版本的 WebView2 SDK、WiX、USB 运行库、对应源码和许可。安装包中的 `licenses/` 包含 WebView2 SDK、Node.js 的许可及 USB 组件的上游资料。
 
 ```powershell
 node --test
+./packaging/Test-DesktopWindow.ps1
 node --check server.js
 node --check lib/bluetooth.js
 node --check web/app.js
@@ -181,7 +200,7 @@ lib/usb-video.js        USB 设备检测、采集和视频转发
 Install-UsbReceiver.ps1 下载并校验 Windows USB 采集组件
 web/                    控制页面与物理键位映射
 Start-IpadConsole.cmd   双击入口
-Start-IpadConsole.ps1   启动并打开浏览器
+Start-IpadConsole.ps1   启动独立窗口，可选浏览器模式
 tests/                  不依赖第三方包的自动测试
 .local/                 本地运行信息，禁止提交
 ```

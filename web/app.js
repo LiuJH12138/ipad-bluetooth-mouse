@@ -19,6 +19,28 @@ async function api(route, data, options = {}) {
 }
 const usbCanvas = $('usb-canvas');
 let usbSession = null, usbLive = false;
+let assistantView = null;
+let assistantChanging = false;
+async function disableAssistant() {
+  assistantView = null;
+  frameEpoch++;
+  await api('assistant/disable', {});
+  update();
+}
+$('assistant').onclick = async () => {
+  assistantChanging = true;
+  update();
+  try {
+    if (assistantView) await disableAssistant();
+    else {
+      await stopControl();
+      const result = await api('assistant/enable', {});
+      assistantView = result.view;
+      if (!hasPicture()) await disableAssistant();
+    }
+  } catch (error) { notice(error.message, true); }
+  finally { assistantChanging = false; update(); }
+};
 function hasPicture() {
   return usbLive || stream?.getVideoTracks()[0]?.readyState === 'live';
 }
@@ -44,6 +66,9 @@ document.addEventListener('fullscreenchange', () => {
   update();
 });
 function update() {
+  $('assistant').disabled = assistantChanging || !hasPicture();
+  $('assistant').textContent = assistantView ? '停止助手控制' : '允许助手控制';
+  $('assistant').setAttribute('aria-pressed', String(!!assistantView));
   fullscreenButton.disabled = !hasPicture() && document.fullscreenElement !== monitor;
   monitor.classList.toggle('captured', !!document.pointerLockElement && !!lease);
   $('control').disabled = !ready() || !!document.pointerLockElement; $('connect').disabled = connected;
@@ -95,6 +120,7 @@ function send(x = 0, y = 0, wheel = 0, b = buttons) {
   return inputChain;
 }
 async function stopShare() {
+  if (assistantView) await disableAssistant().catch(() => {});
   if (usbSession) usbSession.abort();
   usbSession = null;
   usbLive = false;
@@ -199,6 +225,7 @@ setInterval(async () => { if(lease) try { await api('heartbeat',{lease}); } catc
 setInterval(async () => {
   try {
     const status=await api('status'); connected=status.active===1; keyboardConnected=status.keyboardActive===1;
+    if (assistantView && !assistantChanging && !status.assistantEnabled) { assistantView=null; notice('助手控制已结束。'); }
     $('keyboard-status').textContent = keyboardConnected ? '已连接' : connected ? '需重新配对' : '尚未连接';
     const text={idle:'尚未启动',starting:'正在启动蓝牙…',waiting:'等待 iPad 连接',connected:'已连接 · 1 台 iPad',error:'启动失败，可点击连接重试'};
     $('bluetooth-status').textContent=text[status.state] || status.state;
@@ -217,14 +244,14 @@ function frameCanvas() {
 }
 $('frames').onchange = () => { if(!$('frames').checked) clearFrame(); };
 setInterval(async () => {
-  if(!$('frames').checked || frameBusy) return;
+  if((!$('frames').checked && !assistantView) || frameBusy) return;
   const canvas=frameCanvas(); if(!canvas) return; frameBusy=true; const epoch=frameEpoch;
   try {
     const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.82));
-    if(epoch!==frameEpoch || !$('frames').checked) return;
-    const response=await fetch('/api/frame',{method:'POST',headers:{'X-Control-Token':token,'Content-Type':'image/jpeg'},body:blob});
+    if(epoch!==frameEpoch || (!$('frames').checked && !assistantView)) return;
+    const response=await fetch('/api/frame',{method:'POST',headers:{'X-Control-Token':token,'Content-Type':'image/jpeg','X-Assistant-View':assistantView || '', 'X-View-Mode':document.fullscreenElement === monitor ? 'fullscreen' : 'window'},body:blob});
     if(!response.ok) throw new Error('本机画面更新失败');
-    if(epoch!==frameEpoch || !$('frames').checked) await clearFrame();
+    if(epoch!==frameEpoch || (!$('frames').checked && !assistantView)) await clearFrame();
   } catch(e) { notice(e.message,true); } finally { frameBusy=false; }
 },500);
 $('snapshot').onclick = () => { const canvas=frameCanvas(); if(!canvas) return; canvas.toBlob(blob=>{ const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download='ipad-screen.png'; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }); };

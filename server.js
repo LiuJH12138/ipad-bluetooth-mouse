@@ -6,11 +6,23 @@ const crypto = require('node:crypto');
 const { BluetoothBridge } = require('./lib/bluetooth');
 const { UsbVideo } = require('./lib/usb-video');
 
-function createApp({ bridge, token, now = Date.now }) {
+function createApp({ bridge, token, now = Date.now, publishAssistant }) {
   const usb = new UsbVideo();
   let lease = null, frame = null;
+  let assistant = null;
+  const assistantRoutes = new Set(['GET /api/status','GET /api/frame','POST /api/control/start','POST /api/control/stop','POST /api/input']);
+  function revokeAssistant() {
+    if (!assistant) return;
+    assistant = null;
+    if (lease?.assistant) release();
+    publishAssistant(server.address()?.port, null);
+  }
   function release() { lease = null; bridge.release(); }
-  function expire() { if (lease && (now() - lease.time > 1200 || bridge.active !== 1)) release(); if (frame && now() - frame.time > 4000) frame = null; }
+  function expire() {
+    if (lease && (now() - lease.time > 1200 || bridge.active !== 1)) release();
+    if (frame && now() - frame.time > 4000) frame = null;
+    if (assistant && now() - assistant.seen > 4000) revokeAssistant();
+  }
   const timer = setInterval(expire, 200); timer.unref();
   function json(res, status, data) { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(data)); }
   async function body(req, limit) {
@@ -33,13 +45,17 @@ function createApp({ bridge, token, now = Date.now }) {
       const [file, type] = assets[pathname]; res.setHeader('Content-Type', type.startsWith('text/') ? type + '; charset=utf-8' : type);
       fs.createReadStream(path.join(__dirname, 'web', file)).pipe(res); return;
     }
-    const provided = Buffer.from(req.headers['x-control-token'] || ''); const expected = Buffer.from(token);
+    expire();
+    const isAssistant = !!req.headers['x-assistant-token'];
+    const credential = isAssistant ? assistant?.token : token;
+    if (!credential) return json(res, 401, { error: '助手控制未开启或已过期。' });
+    const provided = Buffer.from(req.headers[isAssistant ? 'x-assistant-token' : 'x-control-token'] || ''); const expected = Buffer.from(credential);
     if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) return json(res, 401, { error: '请通过项目启动器打开控制台。' });
+    if (isAssistant && !assistantRoutes.has(req.method + ' ' + pathname)) return json(res, 403, { error: '该操作需要控制台授权。' });
     try {
-      expire();
-      if (req.method === 'GET' && pathname === '/api/status') return json(res, 200, { ...bridge.snapshot(), controlling: !!lease, frameAvailable: !!frame });
+      if (req.method === 'GET' && pathname === '/api/status') return json(res, 200, { ...bridge.snapshot(), controlling: !!lease, frameAvailable: !!frame, assistantEnabled: !!assistant, fullscreen: !!frame?.fullscreen });
       if (req.method === 'GET' && pathname === '/api/frame') {
-        if (!frame) return json(res, 404, { error: '尚未允许画面读取，或画面已过期。' });
+        if (!frame || (isAssistant && frame.view !== assistant.view)) return json(res, 404, { error: '尚未允许画面读取，或画面已过期。' });
         res.setHeader('Content-Type', 'image/jpeg'); res.setHeader('X-Frame-Age-Ms', String(now() - frame.time)); res.end(frame.bytes); return;
       }
       if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
@@ -47,18 +63,31 @@ function createApp({ bridge, token, now = Date.now }) {
       if (pathname === '/api/frame') {
         const bytes = await body(req, 2 * 1024 * 1024);
         if (req.headers['content-type'] !== 'image/jpeg' || bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) return json(res, 400, { error: '无效 JPEG' });
-        frame = { bytes, time: now() }; return json(res, 200, { ok: true });
+        frame = { bytes, time: now(), fullscreen: req.headers['x-view-mode'] === 'fullscreen', view: req.headers['x-assistant-view'] };
+        if (assistant && req.headers['x-assistant-view'] === assistant.view) assistant.seen = now();
+        return json(res, 200, { ok: true });
       }
       const data = JSON.parse((await body(req, 4096)).toString() || '{}');
+      expire();
+      if (isAssistant && (assistant?.token !== credential || frame?.view !== assistant?.view)) return json(res, 409, { error: '等待实时画面或重新开启助手控制。' });
+      if (pathname === '/api/assistant/enable') {
+        if (!publishAssistant) return json(res, 409, { error: '当前服务未配置助手入口。' });
+        revokeAssistant();
+        const next = { token: crypto.randomBytes(32).toString('hex'), view: crypto.randomUUID(), seen: now() };
+        publishAssistant(server.address().port, next.token);
+        assistant = next; frame = null;
+        return json(res, 200, { view: next.view });
+      }
+      if (pathname === '/api/assistant/disable') { revokeAssistant(); frame = null; return json(res, 200, {ok:true}); }
       if (pathname === '/api/frame/clear') { frame = null; return json(res, 200, { ok: true }); }
       if (pathname === '/api/connect') { return json(res, 200, await bridge.connect()); }
       if (pathname === '/api/disconnect') { release(); await bridge.close(); return json(res, 200, bridge.snapshot()); }
       if (pathname === '/api/control/start') {
         if (lease) return json(res, 409, { error: '另一个页面正在控制，请先停止。' });
         if (bridge.active !== 1) return json(res, 409, { error: '请先连接一台 iPad。' });
-        lease = { id: crypto.randomUUID(), time: now(), seq: 0 }; return json(res, 200, { lease: lease.id });
+        lease = { id: crypto.randomUUID(), time: now(), seq: 0, assistant: isAssistant }; return json(res, 200, { lease: lease.id });
       }
-      if (!lease || data.lease !== lease.id) return json(res, 409, { error: '控制已释放，请重新开始。' });
+      if (!lease || data.lease !== lease.id || lease.assistant !== isAssistant) return json(res, 409, { error: '控制已释放，请重新开始。' });
       if (pathname === '/api/control/stop') { release(); return json(res, 200, { ok: true }); }
       if (pathname === '/api/heartbeat') { lease.time = now(); return json(res, 200, { ok: true }); }
       if (pathname === '/api/input') {
@@ -77,11 +106,18 @@ function createApp({ bridge, token, now = Date.now }) {
         }
         lease.seq=seq;lease.time=now();
         if(!accepted){release();return json(res,409,{error:'蓝牙繁忙或断开，已释放控制。'});}
+        if (isAssistant) {
+          while (lease?.id === data.lease && (bridge.pending || bridge.queue?.length)) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            expire();
+          }
+          if (lease?.id !== data.lease) return json(res,409,{error:'蓝牙输入未完成，请检查画面。'});
+        }
         return json(res,200,{ok:true});
       }      return json(res, 404, { error: 'Not found' });
     } catch (e) { json(res, e.status || 400, { error: e.message }); }
   });
-  server.on('close', () => { clearInterval(timer); release(); frame = null; });
+  server.on('close', () => { clearInterval(timer); revokeAssistant(); release(); frame = null; });
   return { server, expire, stopCapture: () => usb.stopCapture?.() };
 }
 if (require.main === module) {
@@ -92,7 +128,15 @@ if (require.main === module) {
   const token = resume ? resume.token : crypto.randomBytes(32).toString('hex');
   const bridge = new BluetoothBridge(path.join(__dirname, 'IpadBluetoothMouse.ps1'));
   const desktop = process.argv.includes('--desktop');
-  const { server, stopCapture } = createApp({ bridge, token });
+  const assistantDirectory = path.join(process.env.LOCALAPPDATA || path.join(__dirname,'.local'), 'iPadControlConsole', 'assistant');
+  let assistantFile;
+  function publishAssistant(port, key) {
+    if (!key) { if (assistantFile) fs.rmSync(assistantFile, {force:true}); return; }
+    fs.mkdirSync(assistantDirectory, {recursive:true, mode:0o700});
+    assistantFile = path.join(assistantDirectory, port + '.json');
+    fs.writeFileSync(assistantFile, JSON.stringify({port, key}), {mode:0o600});
+  }
+  const { server, stopCapture } = createApp({ bridge, token, publishAssistant });
   server.listen(resume ? resume.port : 0, '127.0.0.1', () => {
     const port = server.address().port;
     const url = `http://127.0.0.1:${port}/#${token}`;

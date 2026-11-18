@@ -4,11 +4,11 @@ const assert = require('node:assert/strict');
 const { createApp } = require('../server');
 const { BluetoothBridge } = require('../lib/bluetooth');
 
-async function fixture(t) {
+async function fixture(t, options = {}) {
   let clock = 1000;
   const events = [];
   const bridge = { active:1, keyboardActive:1, keys:(modifiers,keys)=>{events.push({modifiers,keys});return true;}, snapshot:()=>({state:'connected',active:bridge.active}), release:()=>events.push('release'), report:(...args)=>{ events.push(args); return true; }, connect:async()=>({active:1}), close:async()=>{} };
-  const token='test-token'; const { server,expire }=createApp({bridge,token,now:()=>clock});
+  const token='test-token'; const { server,expire }=createApp({bridge,token,now:()=>clock,...options});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>server.close(resolve)));
   const url=`http://127.0.0.1:${server.address().port}`;
@@ -116,4 +116,35 @@ test('disconnect clears both mouse and keyboard connection indicators',async()=>
   const child=new EventEmitter();child.stdin={write(){queueMicrotask(()=>child.emit('exit',0));}};child.kill=()=>{};
   const bridge=new BluetoothBridge('unused');bridge.child=child;bridge.active=bridge.keyboardActive=1;
   await bridge.close();assert.equal(bridge.active,0);assert.equal(bridge.keyboardActive,0);assert.equal(bridge.snapshot().state,'idle');
+});
+
+test('assistant credential is scoped to a live, explicitly shared view and exclusive input', async t => {
+  let key;
+  const f = await fixture(t,{ publishAssistant:(_port,value)=>{key=value;} });
+  const {view} = await (await f.request('assistant/enable',{})).json();
+  const headers = {'X-Control-Token':'','X-Assistant-Token':key};
+  const agent = (route,body) => f.request(route,body,headers);
+  assert.equal((await agent('connect',{})).status,403);
+  assert.equal((await agent('control/start',{})).status,409);
+  const upload = async id => fetch(f.url+'/api/frame',{method:'POST',headers:{
+    'X-Control-Token':f.token,'X-Assistant-View':id,'X-View-Mode':'fullscreen','Content-Type':'image/jpeg'
+  },body:Buffer.from([255,216,255,217])});
+  await upload('different-window');
+  assert.equal((await agent('frame')).status,404);
+  await upload(view);
+  assert.equal((await agent('frame')).status,200);
+  assert.equal((await (await agent('status')).json()).fullscreen,true);
+  const {lease} = await (await agent('control/start',{})).json();
+  assert.equal((await f.request('control/start',{})).status,409);
+  assert.equal((await f.request('control/stop',{lease})).status,409);
+  assert.equal((await agent('input',{lease,seq:1,kind:'keyboard',modifiers:0,keys:[4]})).status,200);
+  await f.request('assistant/disable',{});
+  assert.equal((await agent('status')).status,401);
+  assert.equal(key,null);
+  assert.equal(f.events.at(-1),'release');
+  await f.request('assistant/enable',{});
+  const renewed=key;
+  f.advance(4001);
+  assert.equal((await f.request('status',undefined,{'X-Assistant-Token':renewed})).status,401);
+  assert.equal(key,null);
 });
