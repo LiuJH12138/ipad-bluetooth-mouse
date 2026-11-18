@@ -4,6 +4,7 @@ const startUsb = new URLSearchParams(location.search).get('source') === 'usb';
 const token = location.hash.slice(1) || sessionStorage.getItem('control-token');
 if (location.hash) { sessionStorage.setItem('control-token', token); history.replaceState(null, '', '/'); }
 let stream, lease, seq = 0, connected = false, keyboardConnected = false;
+let bluetoothState = 'idle', connecting = false;
 let inputChain = Promise.resolve(), leaseWait = null, controlEpoch = 0;
 let dx = 0, dy = 0, buttons = 0, inputBusy = false, frameBusy = false, frameEpoch = 0;
 let capturedPosition = null;
@@ -134,10 +135,18 @@ function update() {
   $('position-status').textContent = status;
   $('position-status').classList.toggle('verified', absoluteVerified && available);
   if ($('position-detail').textContent !== detail) $('position-detail').textContent = detail;
-  $('transport-position').textContent = pointMode ? status : 'Esc 退出控制';
+  const captured = !!document.pointerLockElement;
+  const picture = hasPicture();
+  $('transport').hidden = !picture;
+  $('transport-position').textContent = captured ? 'Esc 退出控制' : '';
+  $('source-status').textContent = usbLive ? 'USB 直连' : stream ? '共享窗口' : usbSession ? '正在连接…' : '未连接';
+  $('position-panel').hidden = !usbLive || !connected;
+  $('keyboard-row').hidden = !connected;
   $('verify-position').disabled = !available || aiming || !!document.pointerLockElement;
+  $('verify-position').hidden = !available;
   $('verify-position').textContent = probing ? '验证中…' : absoluteVerified ? '重新验证' : '验证坐标';
   $('point').disabled = !usbLive || !connected || !!document.pointerLockElement;
+  $('point').hidden = !usbLive || !connected || captured;
   $('point').setAttribute('aria-pressed', String(pointMode));
   $('point').textContent = pointMode ? '退出画面操控' : '画面操控';
   usbCanvas.classList.toggle('point-mode', pointMode);
@@ -145,19 +154,19 @@ function update() {
   $('assistant').disabled = aiming || assistantChanging || !hasPicture();
   $('assistant').textContent = assistantView ? '停止助手控制' : '允许助手控制';
   $('assistant').setAttribute('aria-pressed', String(!!assistantView));
-  fullscreenButton.disabled = !hasPicture() && document.fullscreenElement !== monitor;
+  fullscreenButton.hidden = !document.fullscreenEnabled || (!picture && document.fullscreenElement !== monitor);
   monitor.classList.toggle('captured', !!document.pointerLockElement && !!lease);
-  $('control').disabled = aiming || !ready() || !!document.pointerLockElement; $('connect').disabled = connected;
-  $('release').disabled = !lease; $('search').disabled = aiming || !ready() || !keyboardConnected;
-  $('disconnect').disabled = !connected;
-  $('connect').hidden = connected;
-  $('disconnect').hidden = !connected;
-  $('release').hidden = !lease || (pointMode && aiming);
-  $('control').hidden = !!document.pointerLockElement && !!lease;
+  $('control').disabled = aiming || !ready() || captured;
+  const bluetoothRunning = connected || bluetoothState === 'starting' || bluetoothState === 'waiting';
+  $('connect').disabled = connecting;
+  $('connect').hidden = bluetoothRunning;
+  $('disconnect').hidden = !bluetoothRunning;
+  $('release').hidden = !captured || !lease;
+  $('control').hidden = !ready() || captured;
   $('stop-share').disabled = !stream && !usbSession;
   $('stop-share').hidden = $('stop-share').disabled;
   $('usb').disabled = !!usbSession;
-  $('fullscreen-usb').disabled = !!usbSession;
+  $('usb').textContent = usbSession && !usbLive ? '正在连接…' : 'USB 直连';
   $('mode-label').textContent = aiming ? pointPhase : pointMode ? '画面操控' : document.pointerLockElement ? '键鼠控制中' : '预览模式';
   document.body.classList.toggle('controlling', !!lease);
 }
@@ -282,8 +291,12 @@ $('usb').onclick = async () => {
   }
 };
 $('stop-share').onclick = async () => { await stopShare(); notice('已停止投屏'); };
-$('fullscreen-usb').onclick = () => $('usb').click();
-$('connect').onclick = async () => { try { $('connect').disabled = true; await api('connect', {}); notice('正在启动蓝牙，iPad 配对成功后会显示已连接。'); } catch(e) { notice(e.message,true); $('connect').disabled = false; } };
+$('connect').onclick = async () => {
+  connecting = true; update();
+  try { const status = await api('connect', {}); bluetoothState = status.state; }
+  catch(e) { notice(e.message,true); }
+  finally { connecting = false; update(); }
+};
 $('disconnect').onclick = async () => { await stopControl(); try { await api('disconnect', {}); connected = false; update(); } catch(e) { notice(e.message,true); } };
 $('control').onclick = async () => {
   try {
@@ -329,7 +342,7 @@ setInterval(async () => {
 setInterval(async () => { if(lease) try { await api('heartbeat',{lease}); } catch(e) { await stopControl(); notice(e.message,true); } },350);
 setInterval(async () => {
   try {
-    const status=await api('status'); connected=status.active===1; keyboardConnected=status.keyboardActive===1;
+    const status=await api('status'); bluetoothState=status.state; connected=status.active===1; keyboardConnected=status.keyboardActive===1;
     absoluteActive = connected && status.absoluteActive === 1;
     if (!absoluteActive && (absoluteTried || absoluteVerified || currentAction?.probe)) {
       resetVerification();
@@ -449,7 +462,6 @@ pictureKeyboard.addEventListener('beforeinput', e => {
   if (key) { e.preventDefault(); queueStrokes([{modifiers:0,keys:[key]}]); }
 });
 if (startUsb) $('usb').click();
-$('search').onclick=async()=>{try{await ensureLease();await sendKeys({modifiers:8,keys:[44]});await sendKeys({modifiers:0,keys:[]});}catch(e){notice(e.message,true);}};
 
 $('point').onclick = async () => {
   pointMode = !pointMode;

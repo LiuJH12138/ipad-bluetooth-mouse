@@ -106,12 +106,12 @@ USB 和蓝牙就绪后，选择 **画面操控**。在窗口或全屏中，把 W
 
 ## 如何操作
 
-画面接入后，点预览下方的 **「全屏」** 即可放大 USB 或窗口共享画面。在全屏中点 **「开始键鼠控制」**，工具栏会自动收起。按 **Esc** 释放键鼠，若仍处于全屏，可点 **「退出全屏」** 返回工作台。
+在预览中央点 **USB 直连**，或从 **设备连接 → 连接选项** 选择 **共享已有窗口**。画面接入后，预览右上角会出现 **全屏**。全屏中点 **开始键鼠控制** 会收起工具栏。按 **Esc** 释放键鼠，若仍处于全屏，可点 **退出全屏** 返回工作台。
 
 - **移动与点击**：开启控制后，电脑鼠标发送相对位移，左键、拖动和滚轮转发到 iPad。看 iPad 自己的指针定位，可以用页面的速度滑块调整。
 - **键盘输入**：开启控制后转发物理键位。支持字母、数字、标点、方向键、Tab、Enter、Backspace 和修饰键。采用标准六键同时按下报告。
 - **中文输入**：电脑先切到英文输入法，中文转换由 iPad 上的输入法完成。本项目不复制电脑输入法的候选词或剪贴板。
-- **快捷键**：默认将电脑 `Ctrl` 映射成 iPad `Command`，可取消勾选。「打开 iPad 搜索」发送 `Command + Space`。
+- **快捷键**：默认将电脑 `Ctrl` 映射成 iPad `Command`，可在 **键鼠设置** 中取消勾选。
 - **退出与恢复**：`Esc`、切走窗口、页面隐藏或停止共享会释放控制。服务在控制心跳中断超过约 1.2 秒后丢弃待发输入并尝试释放按键。
 
 `Esc` 用于退出键鼠控制。Win、Alt+Tab、Ctrl+Alt+Del 等系统快捷键可能由 Windows 或浏览器处理。键鼠捕获使用电脑鼠标的相对位移。USB 坐标验证通过后，控制台将位移换算为 iPad 的绝对坐标，并用同一蓝牙报告发送左键按下与松开。需要用 Windows 箭头直接点画面时，可切换到「画面操控」。多点触摸和 Apple Pencil 输入暂未支持。
@@ -136,15 +136,16 @@ flowchart LR
 
 在实时预览或全屏工具栏点 **允许助手控制**。此时本机助手可以读取画面、移动 iPad 指针、点击、滚动和发送键盘输入。授权绑定到当前分享窗口。超过 4 秒未收到画面时，服务暂停读图和输入；同一窗口恢复传图后可以继续。点 **停止助手控制**、关闭窗口或停止投屏会结束授权。使用助手前请先释放手动键鼠。
 
-下面的例子让 iPad 打开系统搜索，输入 `7319`，然后保存一帧供助手核对。在安装目录打开 PowerShell；源码版在项目目录运行，并将第一行改为 `$node = 'node'`。
+下面的例子演示点开输入框、输入 `7319` 并读取结果。在安装目录打开 PowerShell；源码版在项目目录运行，并将第一行改为 `$node = 'node'`。先读图，确认输入框的位置，再将示例坐标替换为实际像素坐标。
 
 ```powershell
 $node = '.\runtime\node.exe'
 & $node assistant.js status
 & $node assistant.js frame "$env:TEMP\ipad-frame.jpg"
-& $node assistant.js search
-& $node assistant.js frame "$env:TEMP\ipad-search.jpg"
-# Inspect the image and confirm the search field is ready before typing.
+# Replace the example coordinates with the input field's location in the JPEG.
+& $node assistant.js click 500 200
+& $node assistant.js frame "$env:TEMP\ipad-focus.jpg"
+# Check that the field is focused before typing.
 & $node assistant.js type 7319
 & $node assistant.js frame "$env:TEMP\ipad-result.jpg"
 ```

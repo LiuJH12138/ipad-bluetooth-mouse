@@ -46,8 +46,7 @@ async function run([command, ...args]) {
     if (!/^-?\d+$/.test(s) || Math.abs(Number(s))>limit) throw Error('无效位移或滚轮值');
     return Number(s);
   }
-  if (command === 'search' && !args.length) chord(['MetaLeft','Space']);
-  else if (command === 'key' && args.length && args.length<=6) chord(args);
+  if (command === 'key' && args.length && args.length<=6) chord(args);
   else if (command === 'type' && args.length === 1 && /^[a-zA-Z0-9 ]{1,120}$/.test(args[0])) {
     for (const ch of args[0]) {
       if (ch === ' ') chord(['Space']);
@@ -62,7 +61,7 @@ async function run([command, ...args]) {
       const stepX=Math.max(-127,Math.min(127,x)), stepY=Math.max(-127,Math.min(127,y));
       mouse(stepX,stepY,0); x-=stepX; y-=stepY;
     }
-  } else throw Error('用法：status | frame <jpeg> | move <dx> <dy> | click [X Y] | scroll <n> | search | key <物理键位...> | type <英文字母、空格或数字>');
+  } else throw Error('用法：status | frame <jpeg> | move <dx> <dy> | click [X Y] | scroll <n> | key <物理键位...> | type <英文字母、空格或数字>');
   const {lease} = await (await request('control/start',{})).json();
   try {
     let seq = 0;
