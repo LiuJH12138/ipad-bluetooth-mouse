@@ -36,16 +36,25 @@ Copy-Item "$mirror/NOTICE" "$stage/licenses/Mirrorlab-NOTICE.txt"
 tar.exe -czf "$stage/licenses/Mirrorlab-USB-source.tar.gz" -C $mirror LICENSE NOTICE THIRD_PARTY.md resources/usb/source resources/airplay/source
 Check 'Bundle native sources and notices'
 Add-Type -AssemblyName System.Drawing
-$iconPath = Join-Path $work 'app.ico'
-$bitmap = [Drawing.Bitmap]::new(48,48)
-$g = [Drawing.Graphics]::FromImage($bitmap)
-$g.Clear([Drawing.Color]::FromArgb(40,48,43))
-$pen = [Drawing.Pen]::new([Drawing.Color]::FromArgb(197,230,154),3)
-$g.DrawRectangle($pen,6,10,36,25)
-$g.DrawLine($pen,14,40,34,40)
-$stream = [IO.File]::Create($iconPath)
-try { [Drawing.Icon]::FromHandle($bitmap.GetHicon()).Save($stream) }
-finally { $stream.Dispose(); $pen.Dispose(); $g.Dispose(); $bitmap.Dispose() }
+$iconPath = Join-Path $root 'web\console.ico'
+function Write-WizardBitmap($Name, $Height, [Drawing.Rectangle]$Placement) {
+    $bitmap = [Drawing.Bitmap]::new(493,$Height,[Drawing.Imaging.PixelFormat]::Format24bppRgb)
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    $icon = [Drawing.Icon]::new($iconPath,256,256)
+    $image = $icon.ToBitmap()
+    try {
+        $graphics.Clear([Drawing.Color]::White)
+        if ($Name -eq 'welcome') {
+            $brush = [Drawing.SolidBrush]::new([Drawing.Color]::FromArgb(232,237,231))
+            try { $graphics.FillRectangle($brush,0,0,164,$Height) } finally { $brush.Dispose() }
+        }
+        $graphics.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $graphics.DrawImage($image,$Placement)
+        $bitmap.Save((Join-Path $work "$Name.bmp"),[Drawing.Imaging.ImageFormat]::Bmp)
+    } finally { $image.Dispose(); $icon.Dispose(); $graphics.Dispose(); $bitmap.Dispose() }
+}
+Write-WizardBitmap 'welcome' 312 ([Drawing.Rectangle]::new(12,80,140,140))
+Write-WizardBitmap 'banner' 58 ([Drawing.Rectangle]::new(431,3,52,52))
 $csc = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
 $launcher = Join-Path $stage 'iPadControlConsole.exe'
 $source = Join-Path $PSScriptRoot 'Launcher.cs'
@@ -55,8 +64,8 @@ Check 'Compile the desktop launcher'
 Check 'Generate the installer manifest'
 & "$wix/candle.exe" -nologo -out "$work/installer.wixobj" "$work/installer.wxs"
 Check 'Compile the installer'
-$package = Join-Path $out 'iPad-Control-Console-1.0.0-win-x64.msi'
-& "$wix/light.exe" -nologo -spdb -out $package "$work/installer.wixobj"
+$package = Join-Path $out 'iPad-Control-Console-1.1.0-win-x64.msi'
+& "$wix/light.exe" -nologo -spdb -ext "$wix/WixUIExtension.dll" -cultures:zh-CN -out $package "$work/installer.wixobj"
 Check 'Link and validate the installer'
 (Get-FileHash $package).Hash.ToLowerInvariant() + '  ' + (Split-Path $package -Leaf) | Set-Content -Encoding ascii "$package.sha256"
 $generated = (Resolve-Path -LiteralPath $work).Path

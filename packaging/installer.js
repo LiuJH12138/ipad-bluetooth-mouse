@@ -39,7 +39,7 @@ function directory(relative) {
 const tree = directory('');
 const manifest = `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
- <Product Id="*" UpgradeCode="5CC3C449-CC44-4B5E-B6B6-0E930FBAB762" Name="iPad 控制台" Manufacturer="LiuJH12138" Version="1.0.0" Language="2052" Codepage="936">
+ <Product Id="*" UpgradeCode="5CC3C449-CC44-4B5E-B6B6-0E930FBAB762" Name="iPad 控制台" Manufacturer="LiuJH12138" Version="1.1.0" Language="2052" Codepage="936">
   <Package InstallerVersion="500" InstallScope="perUser" Platform="x64" Compressed="yes" SummaryCodepage="936"/>
   <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 iPad 控制台。"/>
   <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
@@ -48,6 +48,18 @@ const manifest = `<?xml version="1.0" encoding="utf-8"?>
   <Property Id="INSTALLDIR" Secure="yes">
     <RegistrySearch Id="ExistingInstallDirectory" Root="HKCU" Key="Software\\LiuJH12138\\iPadControlConsole" Name="InstallDirectory" Type="raw" Win64="yes"/>
   </Property>
+  <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
+  <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="启动 iPad 控制台"/>
+  <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+  <CustomAction Id="LaunchConsole" FileKey="AppExe" ExeCommand="" Return="asyncNoWait" Impersonate="yes"/>
+  <UIRef Id="WixUI_InstallDir"/>
+  <UI>
+    <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="InstallDirDlg" Order="2">NOT Installed</Publish>
+    <Publish Dialog="InstallDirDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="2">1</Publish>
+    <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchConsole" Order="1">WIXUI_EXITDIALOGOPTIONALCHECKBOX = "1" AND NOT Installed AND ACTION = "INSTALL" AND UILevel = 5</Publish>
+  </UI>
+  <WixVariable Id="WixUIDialogBmp" Value="${xml(path.join(path.dirname(output),'welcome.bmp'))}"/>
+  <WixVariable Id="WixUIBannerBmp" Value="${xml(path.join(path.dirname(output),'banner.bmp'))}"/>
   <Directory Id="TARGETDIR" Name="SourceDir">
     <Directory Id="LocalAppDataFolder"><Directory Id="INSTALLDIR" Name="iPadControlConsole">${tree}</Directory></Directory>
     <Directory Id="ProgramMenuFolder"><Component Id="AppShortcut" Guid="A1DBB413-A167-444D-A58C-430CD09D7D5C" Win64="yes">

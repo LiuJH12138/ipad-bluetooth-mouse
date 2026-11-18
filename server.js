@@ -28,8 +28,9 @@ function createApp({ bridge, token, now = Date.now }) {
     if (!pathname.startsWith('/api/')) {
       const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/keyboard.js': ['keyboard.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
       assets['/usb-video.js'] = ['usb-video.js', 'text/javascript'];
+      assets['/console.ico'] = ['console.ico', 'image/x-icon'];
       if (req.method !== 'GET' || !Object.hasOwn(assets, pathname)) return json(res, 404, { error: 'Not found' });
-      const [file, type] = assets[pathname]; res.setHeader('Content-Type', type + '; charset=utf-8');
+      const [file, type] = assets[pathname]; res.setHeader('Content-Type', type.startsWith('text/') ? type + '; charset=utf-8' : type);
       fs.createReadStream(path.join(__dirname, 'web', file)).pipe(res); return;
     }
     const provided = Buffer.from(req.headers['x-control-token'] || ''); const expected = Buffer.from(token);

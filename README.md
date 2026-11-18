@@ -1,7 +1,7 @@
 <h1 align="center">iPad Control Console</h1>
 <p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
 <p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
-<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.0.0/iPad-Control-Console-1.0.0-win-x64.msi">下载 Windows x64 应用</a></strong></p>
+<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.1.0/iPad-Control-Console-1.1.0-win-x64.msi">下载 Windows x64 应用</a></strong></p>
 <p align="center"><a href="#快速开始">快速开始</a> · <a href="#如何操作">如何操作</a> · <a href="#助手如何读取画面">助手读取画面</a> · <a href="#边界与常见问题">常见问题</a></p>
 
 ![iPad Control Console — 架构示意](docs/overview.svg)
@@ -25,7 +25,7 @@
 
 ### Windows 应用
 
-1. 下载并双击页面顶部的 MSI，安装完成后从开始菜单打开 **iPad 控制台**。应用安装到当前用户目录，内置 Node.js 和 USB 采集组件，使用已安装的 Edge 或 Chrome 显示独立窗口。
+1. 下载并双击页面顶部的 MSI。在中文向导中选择安装目录，点击 **安装** 即可查看进度。完成页默认勾选 **启动 iPad 控制台**，点击 **完成** 会立即打开应用。以后也可从开始菜单打开。应用内置 Node.js 和 USB 采集组件，使用已有的 Edge 或 Chrome 显示独立窗口。
 2. 用 USB 数据线接入并解锁 iPad，点 **USB 直连**。新电脑需要先配置 Apple Mobile Device USB 驱动和下文所述的设备过滤驱动。
 3. 点 **连接蓝牙**，在 iPad 上完成首次配对后点 **开始键鼠控制**。从源码版切换时，先在旧工作台停止投屏并断开蓝牙，让桌面应用接管设备。
 4. 关闭窗口后可以从任务栏通知区域重新打开。右键托盘图标选择 **退出应用** 即可关闭本机服务。在 Windows「设置 → 应用 → 已安装的应用」中可以卸载。
