@@ -1,0 +1,212 @@
+'use strict';
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const fs = require('node:fs');
+const path = require('node:path');
+const {picturePoint} = require('../web/pointing');
+const {PictureMouseGesture} = require('../web/mouse-gestures');
+const IpadKeyboard = require('../web/keyboard');
+const app = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+
+class Control extends EventTarget {
+  classList = {toggle() {}, add() {}, remove() {}};
+  setAttribute(name, value) { this[name] = value; }
+  setPointerCapture(id) { this.captured = id; }
+  getBoundingClientRect() { return {left: 0, top: 0, width: 420, height: 315}; }
+  getContext() { return {drawImage() {}}; }
+}
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function waitFor(condition) {
+  const deadline = performance.now() + 2000;
+  while (!condition()) {
+    if (performance.now() >= deadline) throw Error('Timed out waiting for a picture input event');
+    await delay(4);
+  }
+}
+
+// Exercise app.js from USB start and the status poll through the actual DOM
+// event listeners. Replace only hardware, image recognition, and browser I/O.
+async function openConsole({alignmentGate, heldMoveGate, absolute = false, probeError} = {}) {
+  const controls = new Map();
+  function element(id) {
+    if (!controls.has(id)) controls.set(id, new Control());
+    return controls.get(id);
+  }
+  const document = Object.assign(new EventTarget(), {
+    body: new Control(), getElementById: element, createElement: () => new Control()
+  });
+  const window = new EventTarget();
+  const timers = new Map();
+  const output = {targets: [], heldTargets: [], reports: [], stops: 0, physicalButtons: 0, lease: null};
+  async function fetch(url, options) {
+    const data = options.body && JSON.parse(options.body);
+    let result = {};
+    switch (url) {
+      case '/api/status': result = {active: 1, keyboardActive: 1, absoluteActive: Number(absolute), state: 'connected'}; break;
+      case '/api/frame/clear': break;
+      case '/api/control/start':
+        assert.equal(output.lease, null);
+        result = {lease: output.lease = 'lease-' + output.stops};
+        break;
+      case '/api/input':
+        assert.equal(data.lease, output.lease);
+        output.reports.push(data);
+        output.physicalButtons = data.buttons;
+        break;
+      case '/api/control/stop':
+        assert.equal(data.lease, output.lease);
+        output.lease = null;
+        output.physicalButtons = 0;
+        output.stops++;
+        break;
+      default: throw Error('Unexpected route ' + url);
+    }
+    return {ok: true, json: async () => result};
+  }
+  vm.runInNewContext(app, {
+    window, document, location: {search: '', hash: ''}, sessionStorage: {getItem() {}},
+    performance, setTimeout, clearTimeout, setInterval: (callback, ms) => timers.set(ms, callback),
+    URLSearchParams, AbortController, fetch, IpadKeyboard, PictureMouseGesture, picturePoint,
+    absoluteCoordinates: require('../web/absolute-pointer').absoluteCoordinates,
+    async verifyAbsolutePointer({send,validate}) {
+      for (const [x,y] of [[7000,9000],[23000,11000],[15000,23000]]) {
+        validate();
+        await send(x,y);
+      }
+      if (probeError) throw Error(probeError);
+      return {maxError:1};
+    },
+    playUsbVideo({canvas, onFrame, signal}) {
+      canvas.width = 840; canvas.height = 630; onFrame(1);
+      return new Promise(resolve => signal.addEventListener('abort', resolve, {once: true}));
+    },
+    async aimPointer(target, sample, move, validate) {
+      output.targets.push({...target});
+      if (alignmentGate) await alignmentGate;
+      validate();
+      return {position: {...target}, gain: 1};
+    },
+    createHeldMover(aligned, sample, report, validate) {
+      let cursor = aligned.position;
+      return async (target, mask) => {
+        output.heldTargets.push({...target, mask});
+        if (heldMoveGate) await heldMoveGate;
+        validate();
+        assert.equal(output.physicalButtons, mask);
+        await report(target.x - cursor.x, target.y - cursor.y, mask);
+        cursor = {...target};
+        return cursor;
+      };
+    }
+  });
+  const screen = element('usb-canvas');
+  element('usb').onclick();
+  await waitFor(() => screen.width === 840);
+  await timers.get(1000)();
+  if (!absolute) await element('point').onclick();
+  function emit(type, x, y, extra = {}) {
+    const event = Object.assign(new Event(type, {cancelable: true}), {
+      pointerId: 1, isPrimary: true, button: 0, clientX: x, clientY: y, ...extra
+    });
+    screen.dispatchEvent(event);
+    return event;
+  }
+  return {window, screen, output, emit, element};
+}
+
+test('picture pointer events forward drag coordinates with the button held', async () => {
+  const {screen, output, emit} = await openConsole();
+  emit('pointerdown', 30, 30);
+  assert.equal(screen.captured, 1);
+  emit('pointermove', 60, 50);
+  emit('pointerup', 70, 50);
+  emit('lostpointercapture', 70, 50); // automatic release after a normal up
+  await waitFor(() => output.stops === 1);
+  assert.deepEqual(output.targets, [{x: 60, y: 60}]);
+  assert.deepEqual(output.heldTargets.at(-1), {x: 140, y: 100, mask: 1});
+  assert.deepEqual(output.reports.map(r => r.buttons).filter((b, i, a) => !i || b !== a[i-1]), [1, 0]);
+  assert.equal(output.reports.reduce((sum, r) => sum + r.x, 0), 80);
+  assert.equal(output.reports.reduce((sum, r) => sum + r.y, 0), 40);
+});
+
+test('wheel bursts target the pane under the arrow and keep signed wheel ticks', async () => {
+  const {output, emit} = await openConsole();
+  const event = emit('wheel', 200, 70, {deltaMode: 0, deltaY: 40});
+  emit('wheel', 200, 70, {deltaMode: 0, deltaY: 80});
+  await waitFor(() => output.stops === 1);
+  assert.ok(event.defaultPrevented);
+  assert.deepEqual(output.targets, [{x: 400, y: 140}]);
+  assert.equal(output.reports.reduce((sum, r) => sum + r.wheel, 0), -3);
+  assert.ok(output.reports.every(r => r.buttons === 0));
+});
+
+test('rapid picture clicks retain both presses and releases in order', async () => {
+  const {output, emit} = await openConsole();
+  for (const x of [40, 40, 55]) {
+    emit('pointerdown', x, 50);
+    emit('pointerup', x, 50);
+    emit('lostpointercapture', x, 50);
+  }
+  await waitFor(() => output.stops === 1);
+  assert.deepEqual(output.targets.map(p => p.x), [80, 80, 110]);
+  assert.deepEqual(output.reports.map(r => r.buttons), [1, 0, 1, 0, 1, 0]);
+});
+
+test('blur while aiming cancels pending and queued clicks before button-down', async () => {
+  const gate = Promise.withResolvers();
+  const {window, output, emit} = await openConsole({alignmentGate: gate.promise});
+  emit('pointerdown', 10, 20); emit('pointerup', 10, 20);
+  emit('pointerdown', 30, 20); emit('pointerup', 30, 20);
+  await waitFor(() => output.targets.length === 1);
+  window.dispatchEvent(new Event('blur'));
+  gate.resolve();
+  await waitFor(() => output.stops === 1);
+  await new Promise(setImmediate);
+  assert.deepEqual(output.reports, []);
+  assert.equal(output.targets.length, 1);
+});
+
+test('loss of pointer capture during a live hold stops the lease and ignores a late up', async () => {
+  const {output, emit} = await openConsole();
+  emit('pointerdown', 10, 20);
+  await waitFor(() => output.physicalButtons === 1);
+  emit('lostpointercapture', 10, 20);
+  await waitFor(() => output.stops === 1);
+  emit('pointermove', 150, 70); emit('pointerup', 150, 70);
+  await new Promise(setImmediate);
+  assert.equal(output.physicalButtons, 0);
+  assert.deepEqual(output.reports.map(r => r.buttons), [1]);
+});
+
+test('blur during held-position feedback cannot send a delayed drag or press again', async () => {
+  const gate = Promise.withResolvers();
+  const {window, output, emit} = await openConsole({heldMoveGate: gate.promise});
+  emit('pointerdown', 10, 20);
+  await waitFor(() => output.physicalButtons === 1);
+  emit('pointermove', 70, 20);
+  await waitFor(() => output.heldTargets.length === 1);
+  window.dispatchEvent(new Event('blur'));
+  gate.resolve();
+  emit('pointerup', 70, 20);
+  await waitFor(() => output.stops === 1);
+  await new Promise(setImmediate);
+  assert.equal(output.physicalButtons, 0);
+  assert.deepEqual(output.reports.map(r => [r.x, r.y, r.buttons]), [[0, 0, 1]]);
+});
+
+
+for (const ok of [true,false]) {
+  test('explicit verification reports '+(ok?'direct':'visual')+' mode without clicking', async () => {
+    const {element,output}=await openConsole({absolute:true,probeError:ok?'':'检查失败'});
+    await element('point').onclick();
+    assert.equal(output.reports.length,0);
+    await element('verify-position').onclick();
+    await waitFor(()=>output.stops===1 && element('position-status').textContent!=='正在验证');
+    assert.equal(element('position-status').textContent,ok?'绝对坐标直达':'视觉定位');
+    assert.match(element('position-detail').textContent,ok?/三点通过/:/背景清晰/);
+    assert.equal(output.reports.length,3);
+    assert.ok(output.reports.every(r=>r.kind==='absolute' && r.buttons===0));
+  });
+}

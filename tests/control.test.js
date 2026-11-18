@@ -37,6 +37,15 @@ test('exclusive lease, validation, replay rejection and stale requests after sto
   assert.equal((await f.request('input',{...report,seq:3})).status,409);
   assert.deepEqual(f.events,[[0,30,-10,0],'release']);
 });
+test('all three HID mouse buttons reach the device and unused bits are rejected',async t=>{
+  const f=await fixture(t);
+  const {lease}=await (await f.request('control/start',{})).json();
+  for (const [i,buttons] of [2,4,7,0].entries()) {
+    assert.equal((await f.request('input',{lease,seq:i+1,buttons,x:0,y:0,wheel:0})).status,200);
+  }
+  assert.deepEqual(f.events.map(report=>report[0]),[2,4,7,0]);
+  assert.equal((await f.request('input',{lease,seq:5,buttons:8,x:0,y:0,wheel:0})).status,400);
+});
 test('heartbeat timeout and Bluetooth disconnect release held buttons',async t=>{
   const f=await fixture(t);
   let {lease}=await (await f.request('control/start',{})).json();

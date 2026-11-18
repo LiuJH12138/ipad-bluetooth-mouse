@@ -72,7 +72,7 @@ async function playUsbVideo({ token, canvas, signal, onFrame }) {
         context.setTransform(1, 0, 0, 1, width / 2, height / 2);
         context.rotate(turns * Math.PI / 2);
         context.drawImage(frame, -w / 2, -h / 2, w, h);
-        onFrame(performance.now() - submitted);
+        onFrame(performance.now() - submitted, turns);
       } finally { frame.close(); }
     },
     error(error) { failure = error; abort(); }

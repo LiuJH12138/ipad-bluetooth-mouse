@@ -19,7 +19,8 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
   }
   function release() { lease = null; bridge.release(); }
   function expire() {
-    if (lease && (now() - lease.time > 1200 || bridge.active !== 1)) release();
+    if (lease && (now() - lease.time > 1200 || bridge.active !== 1 ||
+        (lease.usedAbsolute && bridge.absoluteActive !== 1))) release();
     if (frame && now() - frame.time > 4000) frame = null;
     if (assistant && now() - assistant.seen > 4000) revokeAssistant();
   }
@@ -40,6 +41,9 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
     if (!pathname.startsWith('/api/')) {
       const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/keyboard.js': ['keyboard.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
       assets['/usb-video.js'] = ['usb-video.js', 'text/javascript'];
+      assets['/pointing.js'] = ['pointing.js', 'text/javascript'];
+      assets['/absolute-pointer.js'] = ['absolute-pointer.js', 'text/javascript'];
+      assets['/mouse-gestures.js'] = ['mouse-gestures.js', 'text/javascript'];
       assets['/console.ico'] = ['console.ico', 'image/x-icon'];
       if (req.method !== 'GET' || !Object.hasOwn(assets, pathname)) return json(res, 404, { error: 'Not found' });
       const [file, type] = assets[pathname]; res.setHeader('Content-Type', type.startsWith('text/') ? type + '; charset=utf-8' : type);
@@ -99,14 +103,25 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
           if(!Number.isSafeInteger(modifiers)||modifiers<0||modifiers>255||!Array.isArray(keys)||keys.length>6||new Set(keys).size!==keys.length||keys.some(k=>!Number.isSafeInteger(k)||k<4||k>101)) return json(res,400,{error:'无效键盘报告'});
           if(bridge.keyboardActive!==1) return json(res,409,{error:'键盘尚未连接。升级后请在 iPad 忽略旧蓝牙设备并重新配对。'});
           accepted=bridge.keys(modifiers,keys);
+        } else if(data.kind === 'absolute') {
+          const {buttons,x,y}=data;
+          if (![buttons,x,y].every(Number.isSafeInteger) || buttons<0 || buttons>7 ||
+              x<0 || x>32767 || y<0 || y>32767) return json(res,400,{error:'无效绝对坐标报告'});
+          if (bridge.absoluteActive!==1) return json(res,409,{error:'当前 iPad 未订阅绝对坐标报告。'});
+          lease.usedAbsolute = true;
+          accepted=bridge.absolute(buttons,x,y);
         } else {
           const {buttons,x,y,wheel}=data;
-          if(![buttons,x,y,wheel].every(Number.isSafeInteger)||buttons<0||buttons>1||[x,y,wheel].some(n=>Math.abs(n)>127)) return json(res,400,{error:'无效鼠标报告'});
+          if(![buttons,x,y,wheel].every(Number.isSafeInteger)||buttons<0||buttons>7||[x,y,wheel].some(n=>Math.abs(n)>127)) return json(res,400,{error:'无效鼠标报告'});
           accepted=bridge.report(buttons,x,y,wheel);
         }
         lease.seq=seq;lease.time=now();
+        if (data.kind === 'absolute') {
+          accepted = await accepted;
+          if (lease?.id !== data.lease) return json(res,409,{error:'控制已释放。'});
+        }
         if(!accepted){release();return json(res,409,{error:'蓝牙繁忙或断开，已释放控制。'});}
-        if (isAssistant) {
+        if (isAssistant || data.settle === true) {
           while (lease?.id === data.lease && (bridge.pending || bridge.queue?.length)) {
             await new Promise(resolve => setTimeout(resolve, 10));
             expire();

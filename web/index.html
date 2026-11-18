@@ -11,7 +11,7 @@
   <header class="masthead">
     <div class="masthead-inner">
       <h1><img src="/console.ico" width="32" height="32" alt="">iPad 控制台</h1>
-      <span class="local">本机工作台</span>
+
     </div>
   </header>
   <main>
@@ -28,11 +28,13 @@
             <div class="connection-drawing" aria-hidden="true"><span class="cable"></span><span class="plug"></span><span class="device"></span></div>
             <h3>等待 iPad 画面</h3>
             <p>用数据线连接并解锁 iPad，再点「USB 直连」</p>
+            <button id="fullscreen-usb">USB 直连</button>
           </div>
         </div>
         <div class="transport">
-          <div class="transport-state"><span id="mode-label">预览模式</span><small><kbd>Esc</kbd> 退出控制</small></div>
+          <div class="transport-state"><span id="mode-label">预览模式</span><small id="transport-position">Esc 退出控制</small></div>
           <div class="actions">
+            <button id="point" aria-pressed="false" title="在 USB 画面上点击、长按、拖动或使用滚轮">画面操控</button>
             <button id="assistant" aria-pressed="false" title="允许本机助手读取当前投屏并通过蓝牙操作 iPad">允许助手控制</button>
             <button id="fullscreen" aria-controls="monitor" disabled>全屏</button>
             <button id="release" hidden>结束控制</button>
@@ -42,7 +44,18 @@
         <p id="fullscreen-error" role="status"></p>
       </section>
       <aside class="inspector" aria-label="设备连接和设置">
-        <h2>设备连接</h2>
+        <section class="position-panel" aria-labelledby="position-heading">
+          <h2 id="position-heading">画面定位</h2>
+          <p id="position-status">等待 USB 投屏</p>
+          <p id="position-detail" class="hint" aria-live="polite"></p>
+          <div class="verification-actions">
+            <button id="verify-position">验证坐标</button>
+          </div>
+          <details class="input-help"><summary>如何验证坐标</summary>
+            <p>先在 iPad 上打开背景简单、指针清楚的静止页面，例如「设置 → 通用」或空白笔记，然后点「验证坐标」。验证时请暂时停下鼠标。</p>
+            <p>控制台会把指针移到三个位置，逐一比较实际落点。通过后可返回任意 App，窗口与全屏共用结果。重开窗口、旋转 iPad 或重新连接后需重新验证。</p>
+          </details>
+        </section>
         <p id="notice" role="status" aria-live="polite"></p>
         <section class="channel">
           <h3><span class="port" aria-hidden="true"></span>画面来源</h3>
@@ -64,33 +77,20 @@
         </section>
         <section class="channel">
           <h3>键鼠设置</h3>
+
           <label class="check"><input id="command-control" type="checkbox" checked>将 Ctrl 映射为 iPad Command</label>
           <label class="range-label" for="speed">指针速度 <output for="speed" id="speed-value">1.0×</output></label>
           <input id="speed" type="range" min="0.2" max="2" step="0.1" value="1">
-          <details class="input-help"><summary>输入与快捷键</summary><p>输入中文时，将电脑切到英文输入法，再用 iPad 输入法选字。Win、Alt+Tab 等系统快捷键由电脑处理。</p></details>
+          <details class="input-help"><summary>输入与快捷键</summary><button id="search" disabled>打开 iPad 搜索</button><p>输入中文时，将电脑切到英文输入法，再用 iPad 输入法选字。Win、Alt+Tab 等系统快捷键由电脑处理。</p></details>
         </section>
       </aside>
     </div>
-    <section class="tools" aria-label="辅助工具">
-      <details class="tool">
-        <summary>备用触控板</summary>
-        <div class="tool-body">
-          <div id="touchpad" aria-label="iPad 触控板">拖动移动指针，轻点点击</div>
-          <div class="actions"><button id="tap" disabled>左键点击</button><button id="up" disabled>向上滚动</button><button id="down" disabled>向下滚动</button><button id="search" disabled>打开 iPad 搜索</button></div>
-        </div>
-      </details>
-      <details class="tool">
-        <summary>截图与助手读取</summary>
-        <div class="tool-body">
-          <button id="snapshot" disabled>保存当前画面 PNG</button>
-          <label class="check"><input id="frames" type="checkbox">允许本机自动化读取当前画面</label>
-          <p class="hint">每秒最多更新两帧，在本机内存保留 4 秒。关闭后清空。助手读取后的处理取决于你使用的服务。</p>
-        </div>
-      </details>
-    </section>
   </main>
   <script src="/usb-video.js"></script>
   <script src="/keyboard.js"></script>
+  <script src="/pointing.js"></script>
+  <script src="/absolute-pointer.js"></script>
+  <script src="/mouse-gestures.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

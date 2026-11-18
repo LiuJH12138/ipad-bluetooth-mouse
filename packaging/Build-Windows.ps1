@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot
 $out = Join-Path $root 'build'
 $toolsDir = Join-Path $out 'tooling'
@@ -24,14 +24,17 @@ if ((Get-AuthenticodeSignature $node).Status -ne 'Valid') { throw 'The build req
 Copy-Item $node "$stage/runtime/node.exe"
 Copy-Item (Join-Path (Split-Path $node) 'LICENSE') "$stage/licenses/Node-LICENSE.txt"
 foreach ($f in 'server.js','assistant.js','IpadBluetoothMouse.ps1','README.md') { Copy-Item (Join-Path $root $f) $stage }
-foreach ($f in (git -C $root ls-files -- web lib docs/overview.svg)) {
+foreach ($f in (@(git -C $root ls-files -- web lib docs/overview.svg) + @('web/mouse-gestures.js','web/pointing.js','web/absolute-pointer.js') | Sort-Object -Unique)) {
     $target = Join-Path $stage $f
     $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
     Copy-Item -LiteralPath (Join-Path $root $f) -Destination $target
 }
-foreach ($f in 'iphone-usb.exe','iPhoneMirror.UsbConfigurationSwitch.exe','libgcc_s_seh-1.dll','libstdc++-6.dll','libusb-1.0.dll','libusb0.dll','libwinpthread-1.dll') {
+foreach ($f in 'iPhoneMirror.UsbConfigurationSwitch.exe','libgcc_s_seh-1.dll','libstdc++-6.dll','libusb-1.0.dll','libusb0.dll','libwinpthread-1.dll') {
     Copy-Item -LiteralPath (Join-Path "$mirror/resources/usb/win32" $f) -Destination "$stage/usb"
 }
+& "$PSScriptRoot/Build-UsbCapture.ps1" -Destination "$stage/usb" -Materials "$mirror/resources/usb/source"
+Copy-Item "$out/usb-capture/iphone-usb.cpp","$PSScriptRoot/Build-UsbCapture.ps1" "$stage/licenses"
+Copy-Item "$toolsDir/llvm-mingw-20261104-ucrt-x86_64/LICENSE.TXT" "$stage/licenses/LLVM-MinGW-LICENSE.txt"
 Copy-Item "$mirror/NOTICE" "$stage/licenses/Mirrorlab-NOTICE.txt"
 tar.exe -czf "$stage/licenses/Mirrorlab-USB-source.tar.gz" -C $mirror LICENSE NOTICE THIRD_PARTY.md resources/usb/source resources/airplay/source
 Check 'Bundle native sources and notices'
@@ -60,7 +63,7 @@ Write-WizardBitmap 'banner' 58 ([Drawing.Rectangle]::new(431,3,52,52))
 Check 'Generate the installer manifest'
 & "$wix/candle.exe" -nologo -out "$work/installer.wixobj" "$work/installer.wxs"
 Check 'Compile the installer'
-$package = Join-Path $out 'iPad-Control-Console-1.2.0-win-x64.msi'
+$package = Join-Path $out 'iPad-Control-Console-1.4.0-win-x64.msi'
 & "$wix/light.exe" -nologo -spdb -ext "$wix/WixUIExtension.dll" -cultures:zh-CN -out $package "$work/installer.wixobj"
 Check 'Link and validate the installer'
 (Get-FileHash $package).Hash.ToLowerInvariant() + '  ' + (Split-Path $package -Leaf) | Set-Content -Encoding ascii "$package.sha256"

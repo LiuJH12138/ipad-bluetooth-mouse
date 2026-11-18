@@ -2,7 +2,6 @@ $ErrorActionPreference = 'Stop'
 $revision = 'ade4e6429690ebcf430ea19a142a2e01546da8ef'
 $base = "https://raw.githubusercontent.com/SimonDaBoss/mirrorlab/$revision/resources/usb/win32"
 $files = @{
-    'iphone-usb.exe' = 'dd213a3829416ac0a17ad3e57de53c2c25d0e124'
     'iPhoneMirror.UsbConfigurationSwitch.exe' = 'c7c279fe0d480faa728a6b6338be67dfda321505'
     'libgcc_s_seh-1.dll' = '9afc1d6da3ac5b379f50f9da26e2382c56d51a41'
     'libstdc++-6.dll' = '543a1451f8dac3c9131e6ecdfc7762f8b2502741'
@@ -29,4 +28,5 @@ foreach ($name in $files.Keys) {
         Move-Item -LiteralPath $part -Destination $target -Force
     } finally { if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part } }
 }
-Write-Output 'USB capture runtime verified.'
+& "$PSScriptRoot/packaging/Build-UsbCapture.ps1" -Destination $directory
+Write-Output 'USB capture runtime verified and rebuilt.'
