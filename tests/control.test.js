@@ -157,3 +157,30 @@ test('assistant credential is scoped to a live, explicitly shared view and exclu
   assert.equal((await f.request('status',undefined,{'X-Assistant-Token':renewed})).status,401);
   assert.equal(key,null);
 });
+
+test('an open sharing window survives frame pauses, gates input, and revokes on close', async t => {
+  let key;
+  const f = await fixture(t, {publishAssistant: (_port, value) => { key = value; }});
+  const {view} = await (await f.request('assistant/enable', {})).json();
+  const headers = {'X-Control-Token':'', 'X-Assistant-Token':key};
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+  const presence = await fetch(f.url+'/api/assistant/presence', {method:'POST',
+    headers:{'X-Control-Token':f.token}, body:JSON.stringify({view}), signal:controller.signal});
+  assert.equal(presence.status, 200);
+  const upload = () => fetch(f.url+'/api/frame', {method:'POST', headers:{
+    'X-Control-Token':f.token, 'X-Assistant-View':view, 'Content-Type':'image/jpeg'
+  }, body:Buffer.from([255,216,255,217])});
+  try {
+    await upload();
+    f.advance(65_000);
+    assert.equal((await f.request('status', undefined, headers)).status, 200);
+    assert.equal((await f.request('frame', undefined, headers)).status, 404);
+    assert.equal((await f.request('control/start', {}, headers)).status, 409);
+    await upload();
+    assert.equal((await f.request('control/start', {}, headers)).status, 200);
+  } finally { controller.abort(); }
+  for (let i=0; key && i<30; i++) await new Promise(resolve => setTimeout(resolve,10));
+  assert.equal(key, null);
+  assert.equal(f.events.at(-1), 'release');
+});

@@ -27,7 +27,9 @@ let wakePointSample = null;
 let lastPoint = null, heldPointer = null, currentAction = null, pointPhase = '';
 const pictureQueue = [];
 let verificationDetail = '';
+let pointerLayout = 1;
 function resetVerification() {
+  pointerLayout++;
   if (capturedPosition) stopControl();
   absoluteVerified = absoluteTried = false;
   verificationDetail = '';
@@ -51,11 +53,48 @@ $('assistant').onclick = async () => {
       await stopControl();
       const result = await api('assistant/enable', {});
       assistantView = result.view;
+      // The open response binds this grant to this page, including while its
+      // image encoder or background timers are paused. Unload closes the stream.
+      watchAssistantWindow(result.view);
       if (!hasPicture()) await disableAssistant();
     }
   } catch (error) { notice(error.message, true); }
   finally { assistantChanging = false; update(); }
 };
+async function watchAssistantWindow(view) {
+  try {
+    const response = await fetch('/api/assistant/presence', {method:'POST',
+      headers:{'X-Control-Token':token, 'Content-Type':'application/json'}, body:JSON.stringify({view})});
+    if (!response.ok) throw Error('无法保持分享窗口连接。');
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffered = '';
+    while (assistantView === view) {
+      const {value,done} = await reader.read();
+      if (done) break;
+      buffered += value;
+      const lines = buffered.split('\n');
+      buffered = lines.pop();
+      for (const id of lines) {
+        if (id === 'sharing' || !usbLive || assistantView !== view) continue;
+        const {w,h} = pictureGeometry();
+        const canvas = document.createElement('canvas');
+        canvas.width=w; canvas.height=h;
+        const ctx=canvas.getContext('2d');
+        ctx.drawImage(usbCanvas,0,0,w,h);
+        await fetch('/api/assistant/pixels',{method:'POST',headers:{'X-Control-Token':token,
+          'X-Assistant-View':view,'X-Sample-Id':id,'X-Width':String(w),'X-Height':String(h),
+          'X-Layout':pointerLayout,'X-Serial':String(usbFrameNumber)},
+          body:ctx.getImageData(0,0,w,h).data});
+      }
+    }
+  } catch { /* A disconnected window no longer owns a live share. */ }
+  if (assistantView === view) {
+    assistantView = null;
+    frameEpoch++;
+    notice('助手授权已结束，可在当前窗口重新开启。');
+    update();
+  }
+}
 function hasPicture() {
   return usbLive || stream?.getVideoTracks()[0]?.readyState === 'live';
 }
@@ -216,6 +255,7 @@ $('usb').onclick = async () => {
         lastPoint = null;
       }
       usbFrameNumber++;
+      if (assistantView) publishFrame();
       wakePointSample?.();
       if (!usbLive) {
         usbLive = true;
@@ -312,17 +352,24 @@ function frameCanvas() {
   canvas.width=Math.round(width*scale); canvas.height=Math.round(height*scale);
   canvas.getContext('2d').drawImage(source,0,0,canvas.width,canvas.height); return canvas;
 }
-setInterval(async () => {
-  if(!assistantView || frameBusy) return;
+let lastFrameUpload = -Infinity;
+async function publishFrame() {
+  if(!assistantView || frameBusy || performance.now() - lastFrameUpload < 490) return;
   const canvas=frameCanvas(); if(!canvas) return; frameBusy=true; const epoch=frameEpoch;
+  lastFrameUpload = performance.now();
+  const layout=usbLive ? pointerLayout : '';
+  const verified=usbLive && absoluteVerified;
   try {
     const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.82));
     if(epoch!==frameEpoch || !assistantView) return;
-    const response=await fetch('/api/frame',{method:'POST',headers:{'X-Control-Token':token,'Content-Type':'image/jpeg','X-Assistant-View':assistantView || '', 'X-View-Mode':document.fullscreenElement === monitor ? 'fullscreen' : 'window'},body:blob});
+    const response=await fetch('/api/frame',{method:'POST',headers:{'X-Control-Token':token,'Content-Type':'image/jpeg','X-Assistant-View':assistantView || '',
+      'X-Layout':layout,'X-Verified':String(verified),'X-Width':String(canvas.width),'X-Height':String(canvas.height),
+      'X-View-Mode':document.fullscreenElement === monitor ? 'fullscreen' : 'window'},body:blob});
     if(!response.ok) throw new Error('本机画面更新失败');
     if(epoch!==frameEpoch || !assistantView) await clearFrame();
   } catch(e) { notice(e.message,true); } finally { frameBusy=false; }
-},500);
+}
+setInterval(publishFrame,500);
 
 update();
 function sendKeys(report) {

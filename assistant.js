@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { KeyboardState } = require('./web/keyboard');
+const { clickPointer } = require('./lib/assistant-click');
 
 async function run([command, ...args]) {
   const directory = path.join(process.env.LOCALAPPDATA || path.join(__dirname,'.local'), 'iPadControlConsole','assistant');
@@ -53,7 +54,7 @@ async function run([command, ...args]) {
       else if (/\d/.test(ch)) chord(['Digit'+ch]);
       else chord((/[A-Z]/.test(ch) ? ['ShiftLeft'] : []).concat('Key'+ch.toUpperCase()));
     }
-  } else if (command === 'click' && !args.length) { mouse(0,0,0,1); mouse(0,0,0); }
+  } else if (command === 'click' && (args.length===0 || args.length===2)) { /* Sent under the lease below. */ }
   else if (command === 'scroll' && args.length === 1) mouse(0,0,number(args[0],127));
   else if (command === 'move' && args.length === 2) {
     let x=number(args[0],2048), y=number(args[1],2048);
@@ -61,11 +62,19 @@ async function run([command, ...args]) {
       const stepX=Math.max(-127,Math.min(127,x)), stepY=Math.max(-127,Math.min(127,y));
       mouse(stepX,stepY,0); x-=stepX; y-=stepY;
     }
-  } else throw Error('用法：status | frame <jpeg> | move <dx> <dy> | click | scroll <n> | search | key <物理键位...> | type <英文字母、空格或数字>');
+  } else throw Error('用法：status | frame <jpeg> | move <dx> <dy> | click [X Y] | scroll <n> | search | key <物理键位...> | type <英文字母、空格或数字>');
   const {lease} = await (await request('control/start',{})).json();
   try {
     let seq = 0;
-    for (const report of reports) await request('input',{lease,seq:++seq,...report});
+    const layout = command === 'click' ? status.picture?.layout : undefined;
+    const send = report => request('input',{lease,layout,seq:++seq,...report});
+    if (command === 'click') {
+      await clickPointer(args,status,send,async () => {
+        const res = await request('assistant/sample',{lease,layout});
+        return {width:Number(res.headers.get('X-Width')),height:Number(res.headers.get('X-Height')),
+          serial:Number(res.headers.get('X-Serial')),data:new Uint8Array(await res.arrayBuffer())};
+      });
+    } else for (const report of reports) await send(report);
   } finally { await request('control/stop',{lease}).catch(()=>{}); }
 }
 run(process.argv.slice(2)).catch(error=>{ console.error(error.message); process.exitCode=1; });
