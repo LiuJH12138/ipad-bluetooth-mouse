@@ -19,6 +19,7 @@ async function api(route, data, options = {}) {
   const result = await response.json(); if (!response.ok) throw new Error(result.error || '请求失败'); return result;
 }
 const usbCanvas = $('usb-canvas');
+const pictureKeyboard = $('picture-keyboard');
 let usbSession = null, usbLive = false;
 let pointMode = false, aiming = false, usbFrameNumber = 0;
 let absoluteActive = false, absoluteVerified = false, absoluteTried = false, usbTurns = 0;
@@ -101,6 +102,7 @@ function update() {
   $('point').setAttribute('aria-pressed', String(pointMode));
   $('point').textContent = pointMode ? '退出画面操控' : '画面操控';
   usbCanvas.classList.toggle('point-mode', pointMode);
+  pictureKeyboard.disabled = !canPoint() || !keyboardConnected;
   $('assistant').disabled = aiming || assistantChanging || !hasPicture();
   $('assistant').textContent = assistantView ? '停止助手控制' : '允许助手控制';
   $('assistant').setAttribute('aria-pressed', String(!!assistantView));
@@ -335,14 +337,24 @@ for(const type of ['keydown','keyup'])document.addEventListener(type,e=>{
   if (e.code==='Escape' && pointMode && type==='keydown') {
     pointMode=false; stopControl(); return;
   }
-  const pictureKeyboard = canPoint() && document.activeElement === usbCanvas;
-  if (!pictureKeyboard && !(document.pointerLockElement && lease)) return;
+  const pictureFocused = hasPictureKeyboardFocus();
+  if (!pictureFocused && !(document.pointerLockElement && lease)) return;
   if(e.code==='Escape'){stopControl();return;}
   if (!keyboardConnected) { notice('键盘尚未连接，请检查蓝牙。',true); return; }
-  const report=keyboard.change(e.code,type==='keydown');if(!report)return;
+  if (pictureFocused && e.ctrlKey && !e.altKey && (e.code==='KeyV' || e.key?.toLowerCase()==='v')) return;
+  const code = e.code && e.code !== 'Unidentified' ? e.code : e.key;
+  const report=keyboard.change(code,type==='keydown');
+  if (!report) {
+    // Some native automation delivers a printable key without a hardware scan code.
+    if (pictureFocused && e.key?.length===1 && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
+      e.preventDefault();
+      if (type==='keydown') forwardPictureText(e.key);
+    }
+    return;
+  }
   e.preventDefault();e.stopPropagation();
   if(e.repeat)return;
-  if (!pictureKeyboard) { sendKeys(report); return; }
+  if (!pictureFocused) { sendKeys(report); return; }
   if (currentAction?.probe) { keyboard.clear(); return; }
   if (pictureQueue.length >= 96) {
     stopControl(); notice('输入积压，已释放键鼠。',true); return;
@@ -352,13 +364,50 @@ for(const type of ['keydown','keyup'])document.addEventListener(type,e=>{
 },true);
 $('command-control').onchange=()=>{keyboard.commandControl=$('command-control').checked;keyboard.clear();if(lease&&keyboardConnected)sendKeys(keyboard.report());};
 $('release').onclick=stopControl;
+function hasPictureKeyboardFocus() {
+  return canPoint() && document.activeElement === pictureKeyboard;
+}
+function focusPictureKeyboard() {
+  if (keyboardConnected && canPoint()) {
+    pictureKeyboard.disabled = false;
+    pictureKeyboard.focus({preventScroll:true});
+  }
+}
+function queueStrokes(strokes) {
+  if (!hasPictureKeyboardFocus() || !keyboardConnected || currentAction?.probe) return;
+  if (pictureQueue.length >= 96) { stopControl(); notice('输入积压，已释放键鼠。',true); return; }
+  pictureQueue.push({strokes, restore:keyboard.report()});
+  processPictureQueue();
+}
+function forwardPictureText(text) {
+  if (!text || !hasPictureKeyboardFocus()) return;
+  if (text.length > 256) { notice('每次最多输入 256 个字符，请分段输入。',true); return; }
+  try { queueStrokes(IpadKeyboard.textStrokes(text)); }
+  catch (error) { notice(error.message,true); }
+}
+pictureKeyboard.addEventListener('input', e => {
+  if (e.isComposing) return;
+  const text = pictureKeyboard.value;
+  pictureKeyboard.value = '';
+  forwardPictureText(text);
+});
+pictureKeyboard.addEventListener('compositionend', () => {
+  const text = pictureKeyboard.value;
+  pictureKeyboard.value = '';
+  forwardPictureText(text);
+});
+pictureKeyboard.addEventListener('beforeinput', e => {
+  if (!hasPictureKeyboardFocus() || e.isComposing) return;
+  const key = e.inputType === 'deleteContentBackward' ? 42 : e.inputType === 'deleteContentForward' ? 76 : 0;
+  if (key) { e.preventDefault(); queueStrokes([{modifiers:0,keys:[key]}]); }
+});
 if (startUsb) $('usb').click();
 $('search').onclick=async()=>{try{await ensureLease();await sendKeys({modifiers:8,keys:[44]});await sendKeys({modifiers:0,keys:[]});}catch(e){notice(e.message,true);}};
 
 $('point').onclick = async () => {
   pointMode = !pointMode;
   await stopControl();
-  if (pointMode) usbCanvas.focus({preventScroll:true});
+  if (pointMode) focusPictureKeyboard();
   notice(pointMode ? '点选 iPad 输入框即可打字。按 Esc 退出画面操控。' : '已退出画面操控。');
   update();
 };
@@ -367,7 +416,7 @@ $('verify-position').onclick = async () => {
   if (aiming || !usbLive || !absoluteActive || document.pointerLockElement) return;
   if (!pointMode) { pointMode = true; await stopControl(); }
   if (aiming || !canPoint() || !absoluteActive) return;
-  usbCanvas.focus({preventScroll:true});
+  focusPictureKeyboard();
   pictureQueue.push({probe:true, geometry:pictureGeometry()});
   processPictureQueue();
 };
@@ -519,9 +568,22 @@ async function processPictureQueue() {
   try {
     while (pictureQueue.length && epoch === controlEpoch) {
       currentAction = pictureQueue.shift();
-      if (currentAction.keyboardReport) {
+      if (currentAction.strokes) {
+        const {strokes,restore} = currentAction;
         await ensureLease();
-        if (epoch !== controlEpoch || !canPoint() || document.activeElement !== usbCanvas) break;
+        for (const stroke of strokes) {
+          if (epoch !== controlEpoch || !hasPictureKeyboardFocus() || !keyboardConnected) break;
+          await sendKeys(stroke);
+          if (epoch !== controlEpoch) break;
+          await sendKeys({modifiers:0, keys:[]});
+        }
+        if (epoch === controlEpoch && hasPictureKeyboardFocus() && keyboardConnected) {
+          if (restore.modifiers || restore.keys.length) await sendKeys(restore);
+          notice('键盘输入已发送。');
+        }
+      } else if (currentAction.keyboardReport) {
+        await ensureLease();
+        if (epoch !== controlEpoch || !hasPictureKeyboardFocus()) break;
         pointPhase='键盘输入中';
         await sendKeys(currentAction.keyboardReport);
         if (epoch===controlEpoch && !currentAction?.keyboardReport?.keys.length && !keyboard.pressed.size) notice('键盘输入已发送。');
@@ -548,7 +610,8 @@ function canPoint() {
   return pointMode && usbLive && connected && !document.pointerLockElement;
 }
 
-usbCanvas.addEventListener('blur', () => {
+pictureKeyboard.addEventListener('blur', () => {
+  pictureKeyboard.value = '';
   if (pointMode && (lease || aiming || keyboard.pressed.size)) stopControl();
 });
 usbCanvas.addEventListener('pointerdown', event => {
@@ -560,7 +623,7 @@ usbCanvas.addEventListener('pointerdown', event => {
   const geometry = pictureGeometry(), target = mousePoint(event, geometry);
   if (!target || pictureQueue.length >= 4) return;
   event.preventDefault();
-  usbCanvas.focus({preventScroll:true});
+  focusPictureKeyboard();
   const mask = [1,4,2][event.button];
   const gesture = new PictureMouseGesture(target, mask);
   heldPointer = {id:event.pointerId, gesture, geometry};

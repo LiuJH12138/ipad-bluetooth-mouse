@@ -63,7 +63,7 @@ Write-WizardBitmap 'banner' 58 ([Drawing.Rectangle]::new(431,3,52,52))
 Check 'Generate the installer manifest'
 & "$wix/candle.exe" -nologo -out "$work/installer.wixobj" "$work/installer.wxs"
 Check 'Compile the installer'
-$package = Join-Path $out 'iPad-Control-Console-1.5.0-win-x64.msi'
+$package = Join-Path $out 'iPad-Control-Console-1.5.2-win-x64.msi'
 & "$wix/light.exe" -nologo -spdb -ext "$wix/WixUIExtension.dll" -cultures:zh-CN -out $package "$work/installer.wixobj"
 Check 'Link and validate the installer'
 (Get-FileHash $package).Hash.ToLowerInvariant() + '  ' + (Split-Path $package -Leaf) | Set-Content -Encoding ascii "$package.sha256"

@@ -148,6 +148,11 @@ details[open] > summary::after { transform: rotate(225deg); }
 .monitor:fullscreen #fullscreen-usb { display: inline-block; margin-top: 12px; }
 .monitor:fullscreen .transport { background: #2a302d; flex-wrap: wrap; }
 #fullscreen-error { display: none; }
+/* The mirror owns input focus; the iPad draws the text and caret. */
+#picture-keyboard {
+  position: absolute; left: 0; top: 0; width: 1px; height: 1px;
+  padding: 0; border: 0; opacity: 0; pointer-events: none;
+}
 .monitor:fullscreen #fullscreen-error:not(:empty) {
   display: block;
   position: absolute;

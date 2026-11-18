@@ -243,7 +243,7 @@ test('picture keyboard holds modifiers across mouse clicks and releases on focus
   await waitFor(()=>output.reports.some(r=>r.buttons===0));
   assert.equal(output.stops,0);
   element('speed').focus();
-  screen.dispatchEvent(new Event('blur'));
+  element('picture-keyboard').dispatchEvent(new Event('blur'));
   await waitFor(()=>output.stops===1);
   assert.equal(key('keydown','Digit7').defaultPrevented,false);
 });
@@ -275,4 +275,35 @@ test('capture keeps relative mouse reports on unverified devices', async () => {
   }
   await waitFor(() => output.reports.length === 2);
   assert.deepEqual(output.reports.map(r=>[r.kind,r.buttons]), [[undefined,1],[undefined,0]]);
+});
+
+test('clicking the picture focuses its keyboard and immediately forwards native text input after the click', async () => {
+  const gate = Promise.withResolvers();
+  const {element, emit, output, document} = await openConsole({alignmentGate:gate.promise});
+  emit('pointerdown',45,25); emit('pointerup',45,25);
+  const input = element('picture-keyboard');
+  assert.equal(document.activeElement, input);
+  input.value = 'AA5!';
+  input.dispatchEvent(new Event('input'));
+  gate.resolve();
+  await waitFor(()=>output.stops===1);
+  assert.deepEqual(output.reports.map(r=>r.kind==='keyboard' ? [r.modifiers,...r.keys] : r.buttons),
+    [1,0,[2,4],[0],[2,4],[0],[0,34],[0],[2,30],[0]]);
+  assert.equal(input.value,'');
+});
+
+test('native deletion without a physical key code forwards one backspace and ignores unfocused edits', async () => {
+  const {element,emit,output} = await openConsole();
+  emit('pointerdown',45,25); emit('pointerup',45,25);
+  await waitFor(()=>output.stops===1);
+  const input = element('picture-keyboard');
+  const deletion = Object.assign(new Event('beforeinput',{cancelable:true}),{inputType:'deleteContentBackward'});
+  input.dispatchEvent(deletion);
+  assert.equal(deletion.defaultPrevented,true);
+  await waitFor(()=>output.stops===2);
+  assert.deepEqual(output.reports.slice(-2).map(r=>r.keys), [[42],[]]);
+  element('speed').focus();
+  input.value='5';input.dispatchEvent(new Event('input'));
+  await new Promise(setImmediate);
+  assert.equal(output.stops,2);
 });
