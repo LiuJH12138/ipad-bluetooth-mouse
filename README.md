@@ -1,7 +1,7 @@
 <h1 align="center">iPad Control Console</h1>
 <p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
 <p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
-<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.2.0/iPad-Control-Console-1.2.0-win-x64.msi">下载 Windows x64 应用（1.2.0）</a></strong></p>
+<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.0/iPad-Control-Console-1.5.0-win-x64.msi">下载 Windows x64 应用（1.5.0）</a></strong></p>
 <p align="center"><a href="#快速开始">快速开始</a> · <a href="#如何操作">如何操作</a> · <a href="#助手如何读取画面">助手读取画面</a> · <a href="#边界与常见问题">常见问题</a></p>
 
 ![iPad Control Console — 架构示意](docs/overview.svg)
@@ -27,7 +27,7 @@
 
 1. 从页面顶部下载独立窗口版 MSI。若正在使用旧版，先在托盘菜单选择 **退出应用**，再双击 MSI。在中文向导中选择安装目录，点击 **安装** 即可查看进度。完成页默认勾选 **启动 iPad 控制台**，点击 **完成** 会立即打开应用。以后也可从开始菜单打开。应用内置 Node.js 和 USB 采集组件，由自己的 Windows 窗口承载 WebView2。Windows 11 通常自带 Evergreen Runtime；若提示缺少组件，请安装微软提供的 x64 运行时。[WebView2 Runtime 下载](https://developer.microsoft.com/microsoft-edge/webview2/)
 2. 用 USB 数据线接入并解锁 iPad，点 **USB 直连**。新电脑需要先配置 Apple Mobile Device USB 驱动和下文所述的设备过滤驱动。
-3. 点 **连接蓝牙**，在 iPad 上完成首次配对后点 **开始键鼠控制**。从源码版切换时，先在旧工作台停止投屏并断开蓝牙，让桌面应用接管设备。
+3. 点 **连接蓝牙** 并完成首次配对。在 iPad 上打开「设置 → 通用」等静止页面，点 **验证坐标**。显示 **绝对坐标直达** 后，点 **开始键鼠控制**。从源码版切换时，先在旧工作台停止投屏并断开蓝牙，让桌面应用接管设备。
 4. 关闭窗口后可以从任务栏通知区域重新打开。右键托盘图标选择 **退出应用** 即可关闭本机服务。在 Windows「设置 → 应用 → 已安装的应用」中可以卸载。
 
 ### 从源码运行
@@ -66,7 +66,7 @@ powershell.exe -NoProfile -File .\Start-IpadConsole.ps1 -Usb
 
 蓝牙配对通常可以复用。使用备用的窗口共享模式时，浏览器会要求手动选择窗口。
 
-## 在投屏画面上使用鼠标（1.4.0）
+## 在投屏画面上使用键鼠
 
 USB 和蓝牙就绪后，选择 **画面操控**。在窗口或全屏中，把 Windows 箭头放到目标上即可操作。点选投屏中的 iPad 输入框后，可直接用电脑键盘输入，支持退格和修饰键。点击控制台上的其他控件会把键盘焦点还给电脑。按 **Esc** 或点 **退出画面操控** 结束。
 
@@ -75,7 +75,7 @@ USB 和蓝牙就绪后，选择 **画面操控**。在窗口或全屏中，把 W
 | 单击或连续点击两下 | 在目标位置点按，双击效果取决于 App |
 | 按住左键 | 保持按下，可打开支持长按的项目菜单 |
 | 按住并移动，再松开 | 拖动、划动或选择文字，具体行为由 App 决定 |
-| 在列表上滚动滚轮 | 向指针所在区域滚动 |
+| 在列表上滚动滚轮 | 向指针所在区域发送滚轮输入。本次真机复测中，设置列表未响应滚动 |
 | 右键、中键 | 发送对应鼠标按钮，由 iPadOS 或辅助触控中的按钮设置决定用途 |
 
 ### 验证绝对坐标
