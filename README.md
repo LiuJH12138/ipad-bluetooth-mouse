@@ -6,7 +6,7 @@
 
 ## 真机演示
 
-点击下方播放 26 秒实录，含普通话旁白和中文字幕。
+点击下方播放 26 秒实录。点播放器的扬声器图标即可听普通话解说，全程附中文字幕。
 
 https://github.com/user-attachments/assets/5f1bf887-d7e8-4cda-b56b-40dcded73699
 
