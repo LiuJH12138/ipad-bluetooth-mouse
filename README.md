@@ -1,6 +1,7 @@
 <h1 align="center">iPad Control Console</h1>
 <p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
 <p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
+<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.0.0/iPad-Control-Console-1.0.0-win-x64.msi">下载 Windows x64 应用</a></strong></p>
 <p align="center"><a href="#快速开始">快速开始</a> · <a href="#如何操作">如何操作</a> · <a href="#助手如何读取画面">助手读取画面</a> · <a href="#边界与常见问题">常见问题</a></p>
 
 ![iPad Control Console — 架构示意](docs/overview.svg)
@@ -18,11 +19,18 @@
 | 助手视野 | 可选开启本机帧接口，读取短时有效的 JPEG 图像 |
 | 独立脚本 | 保留 PowerShell 命令行控制方式 |
 
-**iPad 端免装 App。** Windows 首次配置需要下载 USB 视频组件。当前直连模式只传画面。已有投屏窗口也可通过「共享已有窗口」接入。
+**iPad 端免装 App。** Windows 安装包内置 USB 视频组件。当前直连模式只传画面，已有投屏窗口也可通过「共享已有窗口」接入。
 
 ## 快速开始
 
-### 准备
+### Windows 应用
+
+1. 下载并双击页面顶部的 MSI，安装完成后从开始菜单打开 **iPad 控制台**。应用安装到当前用户目录，内置 Node.js 和 USB 采集组件，使用已安装的 Edge 或 Chrome 显示独立窗口。
+2. 用 USB 数据线接入并解锁 iPad，点 **USB 直连**。新电脑需要先配置 Apple Mobile Device USB 驱动和下文所述的设备过滤驱动。
+3. 点 **连接蓝牙**，在 iPad 上完成首次配对后点 **开始键鼠控制**。从源码版切换时，先在旧工作台停止投屏并断开蓝牙，让桌面应用接管设备。
+4. 关闭窗口后可以从任务栏通知区域重新打开。右键托盘图标选择 **退出应用** 即可关闭本机服务。在 Windows「设置 → 应用 → 已安装的应用」中可以卸载。
+
+### 从源码运行
 
 - Windows 11，蓝牙适配器支持 **BLE 外设角色**。
 - Windows 自带的 **PowerShell 5.1**。
@@ -33,7 +41,7 @@
 
 ### USB 配置
 
-在项目目录运行一次下列命令。脚本从 Mirrorlab 的固定提交下载 Windows x64 采集程序和运行库，逐个验证文件后放入 `.local/usb-v0.2.0`。脚本只安装项目目录中的组件，驱动单独配置。
+从源码运行时，在项目目录执行一次下列命令。脚本从 Mirrorlab 的固定提交下载 Windows x64 采集程序和运行库，逐个验证文件后放入 `.local/usb-v0.2.0`。使用 MSI 的用户可直接跳过此命令。
 
 ```powershell
 powershell.exe -NoProfile -File .\Install-UsbReceiver.ps1
@@ -151,6 +159,8 @@ powershell.exe -NoProfile -File .\IpadBluetoothMouse.ps1
 | 找不到 `node.exe` | 安装官方 Node.js 后重开启动器 |
 
 ## 验证与开发
+
+在 Windows x64 上使用 PowerShell 7 运行 `./packaging/Build-Windows.ps1` 可生成 MSI 和 SHA-256 文件，输出位于 `build/`。构建使用 Git、已登录的 GitHub CLI、签名的 x64 Node.js 及其随附 LICENSE、Windows .NET Framework 编译器和 WiX 3.14.1。脚本会下载固定版本的 WiX、USB 运行库、对应源码和许可。安装包中的 `licenses/` 包含 Node.js 许可证及 USB 组件的上游资料。
 
 ```powershell
 node --test

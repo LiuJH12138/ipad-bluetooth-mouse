@@ -81,7 +81,7 @@ function createApp({ bridge, token, now = Date.now }) {
     } catch (e) { json(res, e.status || 400, { error: e.message }); }
   });
   server.on('close', () => { clearInterval(timer); release(); frame = null; });
-  return { server, expire };
+  return { server, expire, stopCapture: () => usb.stopCapture?.() };
 }
 if (require.main === module) {
   // An explicit developer restart can preserve an already-approved browser share.
@@ -90,15 +90,34 @@ if (require.main === module) {
   if (resume && (!/^[a-f0-9]{64}$/.test(resume.token) || !Number.isInteger(resume.port) || resume.port < 1024 || resume.port > 65535)) throw new Error('Invalid local session');
   const token = resume ? resume.token : crypto.randomBytes(32).toString('hex');
   const bridge = new BluetoothBridge(path.join(__dirname, 'IpadBluetoothMouse.ps1'));
-  const { server } = createApp({ bridge, token });
+  const desktop = process.argv.includes('--desktop');
+  const { server, stopCapture } = createApp({ bridge, token });
   server.listen(resume ? resume.port : 0, '127.0.0.1', () => {
     const port = server.address().port;
+    const url = `http://127.0.0.1:${port}/#${token}`;
+    if (desktop) {
+      // The desktop host receives the session privately through its child process pipe.
+      process.stdout.write(url + '\n');
+      return;
+    }
     fs.mkdirSync(path.join(__dirname, '.local'), { recursive: true });
-    fs.writeFileSync(path.join(__dirname, '.local', 'session.json'), JSON.stringify({ pid: process.pid, port, token, url: `http://127.0.0.1:${port}/#${token}` }));
+    fs.writeFileSync(path.join(__dirname, '.local', 'session.json'), JSON.stringify({ pid: process.pid, port, token, url }));
     console.log('iPad console is listening on loopback.');
   });
   let closing = false;
-  const shutdown = async () => { if (closing) return; closing = true; await bridge.close(); server.close(() => process.exit(0)); setTimeout(() => process.exit(0), 2000).unref(); };
+  const shutdown = async () => {
+    if (closing) return;
+    closing = true;
+    stopCapture();
+    await bridge.close();
+    server.close();
+    server.closeAllConnections();
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  if (desktop) {
+    process.stdin.once('end', shutdown);
+    process.stdin.resume();
+  }
   process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
 }
 module.exports = { createApp };
