@@ -106,6 +106,9 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
     }
   });
   const screen = element('usb-canvas');
+  screen.requestPointerLock = async () => { document.pointerLockElement = screen; };
+  document.exitPointerLock = () => { document.pointerLockElement = null; };
+  element('speed').value = '1';
   element('usb').onclick();
   await waitFor(() => screen.width === 840);
   await timers.get(1000)();
@@ -243,4 +246,33 @@ test('picture keyboard holds modifiers across mouse clicks and releases on focus
   screen.dispatchEvent(new Event('blur'));
   await waitFor(()=>output.stops===1);
   assert.equal(key('keydown','Digit7').defaultPrevented,false);
+});
+
+test('verified mouse capture delivers pending motion and both button edges on one absolute pointer', async () => {
+  const {document, element, output} = await openConsole({absolute:true});
+  await element('verify-position').onclick();
+  await waitFor(() => output.stops === 1);
+  output.reports.length = 0;
+  await element('control').onclick();
+  const mouse = (type, fields) => document.dispatchEvent(Object.assign(new Event(type), fields));
+  mouse('mousemove', {movementX:25, movementY:0});
+  mouse('mousedown', {button:0, buttons:1});
+  mouse('mousemove', {movementX:12, movementY:4});
+  mouse('mouseup', {button:0, buttons:0});
+  await waitFor(() => output.reports.length >= 3 || output.reports.some(r => r.buttons === 1));
+  await new Promise(setImmediate);
+  assert.deepEqual(output.reports.map(r=>[r.kind,r.buttons]), [['absolute',0],['absolute',0],['absolute',1],['absolute',1],['absolute',0]]);
+  const [center, hover, down, held, up] = output.reports;
+  assert.ok(hover.x > center.x && hover.x === down.x);
+  assert.ok(held.x > down.x && held.x === up.x && held.y === up.y);
+});
+
+test('capture keeps relative mouse reports on unverified devices', async () => {
+  const {document, element, output} = await openConsole({absolute:true});
+  await element('control').onclick();
+  for (const [type, buttons] of [['mousedown', 1], ['mouseup', 0]]) {
+    document.dispatchEvent(Object.assign(new Event(type), {button:0, buttons}));
+  }
+  await waitFor(() => output.reports.length === 2);
+  assert.deepEqual(output.reports.map(r=>[r.kind,r.buttons]), [[undefined,1],[undefined,0]]);
 });

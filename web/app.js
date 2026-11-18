@@ -6,6 +6,7 @@ if (location.hash) { sessionStorage.setItem('control-token', token); history.rep
 let stream, lease, seq = 0, connected = false, keyboardConnected = false;
 let inputChain = Promise.resolve(), leaseWait = null, controlEpoch = 0;
 let dx = 0, dy = 0, buttons = 0, inputBusy = false, frameBusy = false, frameEpoch = 0;
+let capturedPosition = null;
 const keyboard = new IpadKeyboard.KeyboardState();
 const video = $('video');
 function notice(message, error = false) {
@@ -26,6 +27,7 @@ let lastPoint = null, heldPointer = null, currentAction = null, pointPhase = '';
 const pictureQueue = [];
 let verificationDetail = '';
 function resetVerification() {
+  if (capturedPosition) stopControl();
   absoluteVerified = absoluteTried = false;
   verificationDetail = '';
 }
@@ -127,7 +129,7 @@ async function stopControl(keepPoint = false) {
     currentAction?.gesture?.cancel();
     for (const action of pictureQueue.splice(0)) action.gesture?.cancel();
   }
-  controlEpoch++; const old = lease; lease = null; keyboard.clear(); buttons = 0; dx = dy = 0;
+  controlEpoch++; const old = lease; lease = null; keyboard.clear(); capturedPosition = null; buttons = 0; dx = dy = 0;
   if (document.pointerLockElement) document.exitPointerLock();
   if (old) try { await api('control/stop', { lease: old }, { keepalive: true }); } catch {}
   update();
@@ -152,6 +154,16 @@ function send(x = 0, y = 0, wheel = 0, b = buttons) {
   const owner=lease;
   if (!owner) return Promise.resolve();
   const request={ lease:owner, seq:++seq, buttons:b, x, y, wheel };
+  if (capturedPosition && !wheel) {
+    const rect = usbCanvas.getBoundingClientRect();
+    const scale = Math.min(rect.width / usbCanvas.width, rect.height / usbCanvas.height);
+    if (scale <= 0) return stopControl();
+    capturedPosition.x = Math.max(0, Math.min(1, capturedPosition.x + x / (usbCanvas.width * scale)));
+    capturedPosition.y = Math.max(0, Math.min(1, capturedPosition.y + y / (usbCanvas.height * scale)));
+    request.kind = 'absolute';
+    request.x = Math.round(capturedPosition.x * 32767);
+    request.y = Math.round(capturedPosition.y * 32767);
+  }
   inputChain=inputChain.then(async()=>{
     if(lease!==owner) return;
     try { await api('input', request); }
@@ -238,13 +250,25 @@ $('control').onclick = async () => {
     const surface = usbLive ? usbCanvas : video;
     await surface.requestPointerLock();
     if(document.pointerLockElement !== surface) throw new Error('鼠标捕获已取消。');
-    await ensureLease(); notice('键鼠已交给 iPad。可直接移动、点击、滚动和输入，按 Esc 退出。');
+    await ensureLease();
+    if (usbLive && absoluteVerified && absoluteActive) {
+      capturedPosition = {x:0.5, y:0.5};
+      await send();
+      if (!lease) return;
+      notice('键鼠控制中 · 指针从画面中央开始，移动后点按。按 Esc 退出。');
+    } else {
+      notice('键鼠控制中 · 相对鼠标。若左键无响应，按 Esc 后在 USB 预览中验证坐标，再开始控制。');
+    }
   } catch(e) { await stopControl(); notice('未进入鼠标捕获。请重试或使用 USB 画面操控。' + e.message, true); }
 };
 document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) stopControl(); update(); });
 document.addEventListener('mousemove', e => { if (document.pointerLockElement && lease) { dx += e.movementX * Number($('speed').value); dy += e.movementY * Number($('speed').value); dx=Math.max(-508,Math.min(508,dx)); dy=Math.max(-508,Math.min(508,dy)); } });
 for (const event of ['mousedown','mouseup']) document.addEventListener(event, e => {
   if (document.pointerLockElement && lease && e.button >= 0 && e.button <= 2) {
+    if (capturedPosition && (dx || dy)) {
+      send(dx,dy);
+      dx=dy=0;
+    }
     buttons = e.buttons & 7;
     send(0,0,0,buttons);
   }
