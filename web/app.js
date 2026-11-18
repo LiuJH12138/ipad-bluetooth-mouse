@@ -301,7 +301,7 @@ setInterval(async () => {
 update();
 function sendKeys(report) {
   const owner=lease; if(!owner) return Promise.resolve();
-  const request={lease:owner,seq:++seq,kind:'keyboard',...report};
+  const request={lease:owner,seq:++seq,kind:'keyboard',...report,settle:pointMode};
   inputChain=inputChain.then(async()=>{
     if(lease!==owner)return;
     try{await api('input',request);}catch(e){if(lease===owner){await stopControl();notice(e.message,true);}}
@@ -311,13 +311,20 @@ for(const type of ['keydown','keyup'])document.addEventListener(type,e=>{
   if (e.code==='Escape' && pointMode && type==='keydown') {
     pointMode=false; stopControl(); return;
   }
-  if(!document.pointerLockElement||!lease)return;
+  const pictureKeyboard = canPoint() && document.activeElement === usbCanvas;
+  if (!pictureKeyboard && !(document.pointerLockElement && lease)) return;
   if(e.code==='Escape'){stopControl();return;}
+  if (!keyboardConnected) { notice('键盘尚未连接，请检查蓝牙。',true); return; }
   const report=keyboard.change(e.code,type==='keydown');if(!report)return;
   e.preventDefault();e.stopPropagation();
   if(e.repeat)return;
-  if(!keyboardConnected){notice('鼠标已连接，但键盘尚未就绪。请重新配对组合设备。',true);return;}
-  sendKeys(report);
+  if (!pictureKeyboard) { sendKeys(report); return; }
+  if (currentAction?.probe) { keyboard.clear(); return; }
+  if (pictureQueue.length >= 96) {
+    stopControl(); notice('输入积压，已释放键鼠。',true); return;
+  }
+  pictureQueue.push({keyboardReport:report});
+  processPictureQueue();
 },true);
 $('command-control').onchange=()=>{keyboard.commandControl=$('command-control').checked;keyboard.clear();if(lease&&keyboardConnected)sendKeys(keyboard.report());};
 $('release').onclick=stopControl;
@@ -327,7 +334,8 @@ $('search').onclick=async()=>{try{await ensureLease();await sendKeys({modifiers:
 $('point').onclick = async () => {
   pointMode = !pointMode;
   await stopControl();
-  notice(pointMode ? '直接在画面上点击、长按、拖动或滚动。' : '已退出画面操控。');
+  if (pointMode) usbCanvas.focus({preventScroll:true});
+  notice(pointMode ? '点选 iPad 输入框即可打字。按 Esc 退出画面操控。' : '已退出画面操控。');
   update();
 };
 
@@ -335,6 +343,7 @@ $('verify-position').onclick = async () => {
   if (aiming || !usbLive || !absoluteActive || document.pointerLockElement) return;
   if (!pointMode) { pointMode = true; await stopControl(); }
   if (aiming || !canPoint() || !absoluteActive) return;
+  usbCanvas.focus({preventScroll:true});
   pictureQueue.push({probe:true, geometry:pictureGeometry()});
   processPictureQueue();
 };
@@ -486,7 +495,15 @@ async function processPictureQueue() {
   try {
     while (pictureQueue.length && epoch === controlEpoch) {
       currentAction = pictureQueue.shift();
-      await runPictureAction(currentAction);
+      if (currentAction.keyboardReport) {
+        await ensureLease();
+        if (epoch !== controlEpoch || !canPoint() || document.activeElement !== usbCanvas) break;
+        pointPhase='键盘输入中';
+        await sendKeys(currentAction.keyboardReport);
+        if (epoch===controlEpoch && !currentAction?.keyboardReport?.keys.length && !keyboard.pressed.size) notice('键盘输入已发送。');
+      } else {
+        await runPictureAction(currentAction);
+      }
       currentAction = null;
     }
   } catch (error) {
@@ -495,7 +512,7 @@ async function processPictureQueue() {
       notice(error.message, true);
     }
   } finally {
-    if (epoch === controlEpoch) await stopControl(true);
+    if (epoch === controlEpoch && !keyboard.pressed.size) await stopControl(true);
     currentAction = null;
     aiming = false;
     update();
@@ -507,6 +524,9 @@ function canPoint() {
   return pointMode && usbLive && connected && !document.pointerLockElement;
 }
 
+usbCanvas.addEventListener('blur', () => {
+  if (pointMode && (lease || aiming || keyboard.pressed.size)) stopControl();
+});
 usbCanvas.addEventListener('pointerdown', event => {
   if (currentAction?.probe) {
     event.preventDefault();
@@ -516,6 +536,7 @@ usbCanvas.addEventListener('pointerdown', event => {
   const geometry = pictureGeometry(), target = mousePoint(event, geometry);
   if (!target || pictureQueue.length >= 4) return;
   event.preventDefault();
+  usbCanvas.focus({preventScroll:true});
   const mask = [1,4,2][event.button];
   const gesture = new PictureMouseGesture(target, mask);
   heldPointer = {id:event.pointerId, gesture, geometry};

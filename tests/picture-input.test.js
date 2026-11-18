@@ -31,7 +31,11 @@ async function waitFor(condition) {
 async function openConsole({alignmentGate, heldMoveGate, absolute = false, probeError} = {}) {
   const controls = new Map();
   function element(id) {
-    if (!controls.has(id)) controls.set(id, new Control());
+    if (!controls.has(id)) {
+      const control=new Control();
+      control.focus=()=>{document.activeElement=control;};
+      controls.set(id,control);
+    }
     return controls.get(id);
   }
   const document = Object.assign(new EventTarget(), {
@@ -113,7 +117,12 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
     screen.dispatchEvent(event);
     return event;
   }
-  return {window, screen, output, emit, element};
+  function key(type,code) {
+    const event=Object.assign(new Event(type,{cancelable:true}),{code});
+    document.dispatchEvent(event);
+    return event;
+  }
+  return {window, screen, output, emit, element, key, document};
 }
 
 test('picture pointer events forward drag coordinates with the button held', async () => {
@@ -210,3 +219,28 @@ for (const ok of [true,false]) {
     assert.ok(output.reports.every(r=>r.kind==='absolute' && r.buttons===0));
   });
 }
+
+test('picture click followed immediately by typing delivers mouse-up before the first key', async()=>{
+  const gate=Promise.withResolvers();
+  const {output,emit,key}=await openConsole({alignmentGate:gate.promise});
+  emit('pointerdown',24,26); emit('pointerup',24,26);
+  assert.equal(key('keydown','Digit7').defaultPrevented,true);
+  key('keyup','Digit7');
+  gate.resolve();
+  await waitFor(()=>output.stops===1);
+  assert.deepEqual(output.reports.map(r=>r.kind==='keyboard' ? r.keys : r.buttons),[1,0,[36],[]]);
+  assert.ok(output.reports.filter(r=>r.kind==='keyboard').every(r=>r.settle));
+});
+
+test('picture keyboard holds modifiers across mouse clicks and releases on focus loss', async()=>{
+  const {output,emit,key,screen,element}=await openConsole();
+  key('keydown','ShiftLeft');
+  await waitFor(()=>output.reports.some(r=>r.modifiers===2));
+  emit('pointerdown',20,30); emit('pointerup',20,30);
+  await waitFor(()=>output.reports.some(r=>r.buttons===0));
+  assert.equal(output.stops,0);
+  element('speed').focus();
+  screen.dispatchEvent(new Event('blur'));
+  await waitFor(()=>output.stops===1);
+  assert.equal(key('keydown','Digit7').defaultPrevented,false);
+});

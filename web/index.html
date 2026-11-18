@@ -22,7 +22,7 @@
           <span class="signal"><i id="video-dot" aria-hidden="true"></i><span id="video-status">等待画面</span></span>
         </div>
         <div id="stage">
-          <canvas id="usb-canvas" hidden aria-label="iPad USB 实时画面"></canvas>
+          <canvas id="usb-canvas" tabindex="-1" hidden aria-label="iPad USB 实时画面"></canvas>
           <video id="video" autoplay muted playsinline aria-label="共享窗口实时画面"></video>
           <div id="placeholder">
             <div class="connection-drawing" aria-hidden="true"><span class="cable"></span><span class="plug"></span><span class="device"></span></div>
@@ -34,7 +34,7 @@
         <div class="transport">
           <div class="transport-state"><span id="mode-label">预览模式</span><small id="transport-position">Esc 退出控制</small></div>
           <div class="actions">
-            <button id="point" aria-pressed="false" title="在 USB 画面上点击、长按、拖动或使用滚轮">画面操控</button>
+            <button id="point" aria-pressed="false" title="在 USB 画面上点按、拖动、滚动或键入文字">画面操控</button>
             <button id="assistant" aria-pressed="false" title="允许本机助手读取当前投屏并通过蓝牙操作 iPad">允许助手控制</button>
             <button id="fullscreen" aria-controls="monitor" disabled>全屏</button>
             <button id="release" hidden>结束控制</button>
