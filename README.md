@@ -1,12 +1,12 @@
 <h1 align="center">iPad Control Console</h1>
 <p align="center"><strong>把闲置 iPad，变成电脑旁可以直接操作的一块屏幕。</strong></p>
 <p align="center">实时投屏 · 键盘与鼠标 · 本机画面接口</p>
-<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.3/iPad-Control-Console-1.5.3-win-x64.msi">下载 Windows x64 应用（1.5.3）</a></strong></p>
+<p align="center"><strong><a href="https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi">下载 Windows x64 应用（1.5.4）</a></strong></p>
 <p align="center"><a href="#快速开始">快速开始</a> · <a href="#ai-如何操作-ipad">AI 操作指南</a> · <a href="#如何操作">手动键鼠</a> · <a href="#边界与常见问题">常见问题</a></p>
 
 ![iPad Control Console — 架构示意](docs/overview.svg)
 
-**1.5.3 更新了本机助手控制。** 开启「允许助手控制」后，`assistant.js` 可以点击当前指针位置，也可以按回传 JPEG 的像素坐标点击输入框，再打字、读图核对。分享窗口短暂停止传图时，输入会暂停；同一窗口恢复传图后可沿用原授权。使用 Computer Use 直接点投屏时，这个开关可以保持关闭。[操作指南](#ai-如何操作-ipad) · [真机实测记录](https://github.com/LiuJH12138/ipad-bluetooth-mouse/blob/v1.5.3/docs/validation.md)
+**1.5.4 更新了投屏窗口。** 设备连接、指针定位和键鼠设置集中在左侧栏。点「iPad 屏幕」旁的侧栏按钮可给画面腾出空间，窄窗口默认收起侧栏。已移除「打开 iPad 搜索」快捷操作和对应的 `assistant.js search` 命令。[AI 操作指南](#ai-如何操作-ipad)
 
 ## 这个项目做什么
 
@@ -108,7 +108,7 @@ USB 和蓝牙就绪后，选择 **画面操控**。在窗口或全屏中，把 W
 
 在预览中央点 **USB 直连**，或从 **设备连接 → 连接选项** 选择 **共享已有窗口**。画面接入后，预览右上角会出现 **全屏**。全屏中点 **开始键鼠控制** 会收起工具栏。按 **Esc** 释放键鼠，若仍处于全屏，可点 **退出全屏** 返回工作台。
 
-源码版将设备连接、指针定位和键鼠设置放在左侧栏。点 **iPad 屏幕** 标题左侧的侧栏按钮即可收起或展开。窄窗口默认收起，展开后设置显示在预览上方。
+控制台将设备连接、指针定位和键鼠设置放在左侧栏。点 **iPad 屏幕** 标题左侧的侧栏按钮即可收起或展开。窄窗口默认收起，展开后设置显示在预览上方。
 
 - **移动与点击**：开启控制后，电脑鼠标发送相对位移，左键、拖动和滚轮转发到 iPad。看 iPad 自己的指针定位，可以用页面的速度滑块调整。
 - **键盘输入**：开启控制后转发物理键位。支持字母、数字、标点、方向键、Tab、Enter、Backspace 和修饰键。采用标准六键同时按下报告。
