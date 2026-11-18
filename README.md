@@ -2,20 +2,20 @@
 
 在 Windows 上看 iPad 的实时画面，用电脑的鼠标点按、拖动，用键盘在 iPad 上打字。画面通过 USB 传到电脑，键鼠通过蓝牙连接 iPad。iPad 端无需安装 App。
 
-**[下载 Windows x64 安装包（1.5.4）](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi)**　·　[观看操作演示](docs/media/console-demo.mp4)　·　[使用手册](docs/guide.md)
+**[下载 Windows x64 安装包（1.5.4）](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi)**　·　[观看 USB 真机实录（普通话配音）](docs/media/console-demo.mp4)　·　[使用手册](docs/guide.md)
 
-[![iPad 控制台 1.5.4 实际窗口内容。左侧显示设备状态，右侧预览未登录的 GitHub 公开搜索页。](docs/media/github-search.png)](docs/media/console-demo.mp4)
+[![iPad 控制台 1.5.4 的真机回传画面。左侧显示 USB 直连、蓝牙和键盘已连接，右侧的 iPad GitHub 搜索框中显示 vscode。](docs/media/github-search.png)](docs/media/console-demo.mp4)
 
 <details>
-<summary>在本页观看 13 秒操作演示（中文字幕）</summary>
+<summary>在本页预览 26 秒真机操作（动图无声，MP4 含普通话配音）</summary>
 
-![展开连接选项、共享 GitHub 搜索窗口、搜索 microsoft/vscode，随后进入并退出全屏的录屏。](docs/media/console-preview.gif)
+![用电脑鼠标点开 iPad 上的 GitHub 搜索框，用电脑键盘输入 vscode，看到搜索建议后切换到全屏。](docs/media/console-preview.gif)
 
-[下载高清 MP4](https://github.com/LiuJH12138/ipad-bluetooth-mouse/raw/refs/heads/main/docs/media/console-demo.mp4)
+[下载带普通话配音和中文字幕的 MP4](https://github.com/LiuJH12138/ipad-bluetooth-mouse/raw/refs/heads/main/docs/media/console-demo.mp4)
 
 </details>
 
-演示使用「共享已有窗口」接入未登录的 GitHub 页面。搜索在来源标签页中输入，控制台同步显示结果并切换全屏。USB 直连和蓝牙键鼠在 iPad 上的表现见[真机验证记录](docs/validation.md)。
+这段演示录自 USB 直连的 iPad。电脑鼠标点开 GitHub 搜索框，电脑键盘经蓝牙输入 <code>vscode</code>。iPad 显示对应的搜索建议后，控制台切换到全屏。片中剪去了等待时间，输入片段局部放大。[更多真机验证记录](docs/validation.md)
 
 ## 快速开始
 
@@ -40,7 +40,7 @@
 
 ## 隐私与授权
 
-日常投屏时，视频在电脑本机解码。开启「允许助手控制」后，本机服务只在内存中保留最近一帧供已授权工具读取，画面超过 4 秒未更新就暂停读图和输入。把画面交给外部 AI 后，后续处理取决于该服务。公开演示素材只包含控制台和未登录的 GitHub 页面。[助手接口与授权说明](docs/guide.md#助手如何读取画面)
+日常投屏时，视频在电脑本机解码。开启「允许助手控制」后，本机服务只在内存中保留最近一帧供已授权工具读取，画面超过 4 秒未更新就暂停读图和输入。把画面交给外部 AI 后，后续处理取决于该服务。演示只收录控制台与 iPad 上的 GitHub 公开搜索界面，已遮挡账户图标和状态栏。普通话旁白由本机离线合成。[助手接口与授权说明](docs/guide.md#助手如何读取画面)
 
 ## 开发与支持
 
