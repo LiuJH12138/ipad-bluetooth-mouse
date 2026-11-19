@@ -90,3 +90,32 @@ test('native absolute payload preserves button bits, little-endian axes and owne
       path.join(__dirname,'absolute-report.ps1')], {encoding:'utf8',windowsHide:true});
     assert.equal(result.status, 0, result.stderr);
   });
+
+test('explicit routing waits for worker acknowledgement and never retargets queued input', async t => {
+  const {bridge,writes,reply} = await openBridge(t);
+  const [first,second] = ['a'.repeat(32),'b'.repeat(32)];
+  const peers = [first,second].map(id => ({id,keyboard:true,absolute:true}));
+  const status = selectedPeer => 'TARGETS: '+JSON.stringify({peers,selectedPeer,absoluteActive:1,keyboardActive:1});
+  reply(status(null));
+  assert.deepEqual(bridge.snapshot().peers,peers);
+  assert.equal(bridge.active,0);
+  assert.equal(await bridge.selectPeer('invalid'),false);
+  const select = bridge.selectPeer(second);
+  assert.equal(writes.at(-1),'peer-select '+second);
+  assert.equal(bridge.keys(0,[4]),false);
+  assert.equal(bridge.report(1,0,0,0),false);
+  assert.equal(await bridge.selectPeer(first),false);
+  reply(status(second));
+  assert.equal(await select,true);
+  assert.equal(bridge.snapshot().selectedPeer,second);
+  assert.equal(bridge.keys(0,[4]),true);
+  assert.equal(bridge.keys(0,[5]),true);
+  const deselect = bridge.selectPeer(null);
+  assert.ok(!writes.includes('keys 0 5'));
+  reply('OK: keys');
+  assert.equal(writes.at(-1),'peer-clear');
+  reply(status(null));
+  assert.equal(await deselect,true);
+  assert.equal(bridge.keys(0,[4]),false);
+  assert.ok(!writes.includes('keys 0 5'));
+});

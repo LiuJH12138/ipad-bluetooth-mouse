@@ -71,7 +71,7 @@ class PictureMouseGesture {
     });
   }
 
-  async play({gain, report, validate, moveHeld}) {
+  async play({gain, report, validate, moveHeld, paceAbsoluteDrag = false}) {
     if (this.playing || (!moveHeld && !(Number.isFinite(gain) && gain > 0))) throw Error('鼠标定位状态无效。');
     this.playing = true;
     const check = () => {
@@ -81,7 +81,14 @@ class PictureMouseGesture {
     check();
     let sentX = 0, sentY = 0, dragged = false;
     let reached = this.start;
-    let heldMs = 0;
+    let heldMs = 0, lastMotionAt = 0;
+    const waitUntil = async deadline => {
+      while (performance.now() < deadline) {
+        check();
+        await this.wait(deadline - performance.now());
+      }
+      check();
+    };
     try {
       await report(0, 0, this.buttonMask);
       const downAt = performance.now();
@@ -98,7 +105,23 @@ class PictureMouseGesture {
           }
           if (moveHeld) {
             const intermediate = this.path.length > 0 || this.endTime === null;
-            await moveHeld({x: next.x, y: next.y}, this.buttonMask, {intermediate});
+            const dx = next.x - reached.x, dy = next.y - reached.y;
+            const distance = Math.hypot(dx, dy);
+            // A fast automation drag can contain only down and up. iOS needs
+            // to observe held movement between those edges across input frames.
+            if (paceAbsoluteDrag && distance >= 12 && next.time - (reached.time || 0) <= 45) {
+              const steps = Math.min(8, Math.max(3, Math.ceil(distance / 32)));
+              await waitUntil(Math.max(downAt + 50, lastMotionAt + 16));
+              for (let i = 1; i <= steps; i++) {
+                if (i > 1) await waitUntil(lastMotionAt + 16);
+                await moveHeld({x: reached.x + dx*i/steps, y: reached.y + dy*i/steps},
+                  this.buttonMask, {intermediate: i < steps || intermediate});
+                lastMotionAt = performance.now();
+              }
+            } else {
+              await moveHeld({x: next.x, y: next.y}, this.buttonMask, {intermediate});
+              if (paceAbsoluteDrag) lastMotionAt = performance.now();
+            }
             dragged = true;
             reached = next;
             continue;
@@ -120,7 +143,8 @@ class PictureMouseGesture {
           reached = next;
           continue;
         }
-        const releaseAt = this.endTime === null ? Infinity : Math.max(this.minimumHoldMs, this.endTime);
+        const releaseAt = this.endTime === null ? Infinity : Math.max(this.minimumHoldMs, this.endTime,
+          lastMotionAt ? lastMotionAt - downAt + 32 : 0);
         if (!next && elapsed >= releaseAt) break;
         // A rotation or lease change must also interrupt a stationary long press.
         await this.wait(Math.min(200, (next ? next.time : releaseAt) - elapsed));

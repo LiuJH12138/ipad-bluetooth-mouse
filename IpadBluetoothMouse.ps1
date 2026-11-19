@@ -3,7 +3,8 @@ $instanceMutex = New-Object Threading.Mutex($false, 'Local\IpadBluetoothMouse')
 try { $ownsMutex = $instanceMutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $ownsMutex = $true }
 if (-not $ownsMutex) {
     $instanceMutex.Dispose()
-    throw 'Another iPad Bluetooth Mouse instance is already running. Close it before starting this one.'
+    [Console]::Error.WriteLine('Bluetooth is in use by another console.')
+    exit 73
 }
 
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
@@ -53,33 +54,105 @@ function New-GattCharacteristic($service, [int]$uuid, $properties, [byte[]]$valu
     $result.Characteristic
 }
 
-function Send-MouseReport([byte]$buttons, [int]$dx, [int]$dy, [int]$wheel) {
+function Get-UniquePeerClient($report, [string]$id) {
+    if (!$id) { return }
+    $matches = @($report.SubscribedClients | Where-Object {
+        $_.Session.SessionStatus -eq 'Active' -and $_.Session.DeviceId.Id -ceq $id
+    })
+    if ($matches.Count -eq 1) { return $matches[0] }
+}
+
+function Get-PeerCatalog {
+    $ids = @($mouseReport.SubscribedClients | Where-Object {
+        $_.Session.SessionStatus -eq 'Active' -and $_.Session.DeviceId.Id
+    } | ForEach-Object { $_.Session.DeviceId.Id })
+    foreach ($known in @($script:peerHandles.Keys)) {
+        if ($known -cnotin $ids) {
+            $null = $script:peerHandles.Remove($known)
+            if ($known -ceq $script:mousePeer) {
+                $script:mousePeer = $null
+                $script:explicitPeer = $true
+            }
+        }
+    }
+    foreach ($id in $ids) {
+        if (!(Get-UniquePeerClient $mouseReport $id)) { continue }
+        if (!$script:peerHandles.ContainsKey($id)) { $script:peerHandles[$id] = [Guid]::NewGuid().ToString('N') }
+        [pscustomobject]@{
+            id = $script:peerHandles[$id]
+            keyboard = ($null -ne (Get-UniquePeerClient $keyboardReport $id))
+            absolute = ($null -ne (Get-UniquePeerClient $absoluteReport $id))
+        }
+    }
+}
+
+function Select-InputPeer([string]$handle) {
+    $null = @(Get-PeerCatalog)
+    $id = $null
+    if ($handle) {
+        if ($handle -cnotmatch '^[a-f0-9]{32}$') { throw 'Invalid Bluetooth target.' }
+        foreach ($peer in $script:peerHandles.GetEnumerator()) {
+            if ($peer.Value -ceq $handle) { $id = $peer.Key; break }
+        }
+        if (!$id -or !(Get-UniquePeerClient $mouseReport $id)) { throw 'Bluetooth target disconnected.' }
+    }
+    Reset-PeerInput
+    $script:mousePeer = $id
+    $script:explicitPeer = $true
+}
+
+function Get-MouseClient {
+    if ($script:explicitPeer) { return (Get-UniquePeerClient $mouseReport $script:mousePeer) }
     $clients = @($mouseReport.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' })
-    if ($clients.Count -ne 1) { throw "Expected one active iPad mouse connection, found $($clients.Count)." }
+    if ($clients.Count -ne 1) { return }
+    $id = $clients[0].Session.DeviceId.Id
+    if (!$id) { return }
+    $keyboards = @($keyboardReport.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' })
+    if ($keyboards.Count -gt 1 -or ($keyboards.Count -eq 1 -and $keyboards[0].Session.DeviceId.Id -ne $id)) { return }
+    if (!$script:mousePeer) { $script:mousePeer = $id }
+    if ($id -eq $script:mousePeer) { return $clients[0] }
+}
+
+function Get-MatchingClient($report) {
+    $mouse = Get-MouseClient
+    if (!$mouse) { return }
+    if ($script:explicitPeer) { return (Get-UniquePeerClient $report $script:mousePeer) }
+    $clients = @($report.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' })
+    if ($clients.Count -eq 1 -and $clients[0].Session.DeviceId.Id -eq $mouse.Session.DeviceId.Id) { return $clients[0] }
+}
+
+function Send-MouseReport([byte]$buttons, [int]$dx, [int]$dy, [int]$wheel) {
+    $client = Get-MouseClient
+    if (!$client) { throw 'A single matching mouse connection is required. Reconnect Bluetooth to switch devices.' }
+    if ($buttons) { $script:relativeHeld = $client }
+    Write-MouseReport $client $buttons $dx $dy $wheel
+    if (!$buttons) { $script:relativeHeld = $null }
+}
+
+function Write-MouseReport($client, [byte]$buttons, [int]$dx, [int]$dy, [int]$wheel) {
     $payload = New-ByteBuffer ([byte[]]@($buttons, ($dx -band 255), ($dy -band 255), ($wheel -band 255)))
-    $result = Wait-WinRtOperation ($mouseReport.NotifyValueAsync($payload, $clients[0])) $notifyResultType
+    $result = Wait-WinRtOperation ($mouseReport.NotifyValueAsync($payload, $client)) $notifyResultType
     if ($result.Status -ne 'Success') { throw "Mouse report failed: $($result.Status)." }
 }
 
 function Send-KeyboardReport([byte]$modifiers, [byte[]]$keys) {
-    $clients = @($keyboardReport.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' })
-    $mouseClients = @($mouseReport.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' })
-    if ($clients.Count -ne 1) { throw "Expected one active keyboard connection, found $($clients.Count). Re-pair the iPad after upgrading the HID descriptor." }
-    if ($mouseClients.Count -ne 1 -or $mouseClients[0].Session.DeviceId.Id -ne $clients[0].Session.DeviceId.Id) {
-        throw 'Keyboard and mouse must belong to the same single connected iPad.'
-    }
+    $client = Get-MatchingClient $keyboardReport
+    if (!$client) { throw 'Keyboard and mouse must belong to the same single connected device.' }
+    if ($modifiers -or $keys.Count) { $script:keyboardHeld = $client }
+    Write-KeyboardReport $client $modifiers $keys
+    if (!$modifiers -and !$keys.Count) { $script:keyboardHeld = $null }
+}
+
+function Write-KeyboardReport($client, [byte]$modifiers, [byte[]]$keys) {
     $bytes = [byte[]]@(0,0,0,0,0,0,0,0)
     $bytes[0] = $modifiers
     for ($i = 0; $i -lt $keys.Count; $i++) { $bytes[$i + 2] = $keys[$i] }
-    $result = Wait-WinRtOperation ($keyboardReport.NotifyValueAsync((New-ByteBuffer $bytes), $clients[0])) $notifyResultType
+    $result = Wait-WinRtOperation ($keyboardReport.NotifyValueAsync((New-ByteBuffer $bytes), $client)) $notifyResultType
     if ($result.Status -ne 'Success') { throw "Keyboard report failed: $($result.Status)." }
 }
 
 function Get-AbsoluteClient {
-    $mouse = @($mouseReport.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' })
-    $absolute = @($absoluteReport.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' })
-    if ($mouse.Count -eq 1 -and $absolute.Count -eq 1 -and $mouse[0].Session.DeviceId.Id -and
-        $mouse[0].Session.DeviceId.Id -eq $absolute[0].Session.DeviceId.Id) { return $absolute[0] }
+    Get-MatchingClient $absoluteReport
 }
 
 function Write-AbsoluteReport($client, [int]$buttons, [int]$x, [int]$y) {
@@ -98,12 +171,45 @@ function Reset-AbsoluteButtons {
     $script:absoluteHeld = $null
 }
 
+function Reset-PeerInput {
+    # Each release belongs to the client that received down, even when selection is now ambiguous.
+    $released = $true
+    try { Reset-AbsoluteButtons } catch { $released = $false }
+    try {
+        if ($script:relativeHeld -and $script:relativeHeld.Session.SessionStatus -eq 'Active') {
+            Write-MouseReport $script:relativeHeld 0 0 0 0
+        }
+        $script:relativeHeld = $null
+    } catch { $released = $false }
+    try {
+        if ($script:keyboardHeld -and $script:keyboardHeld.Session.SessionStatus -eq 'Active') {
+            Write-KeyboardReport $script:keyboardHeld 0 ([byte[]]@())
+        }
+        $script:keyboardHeld = $null
+    } catch { $released = $false }
+    if (!$released) { throw 'Unable to release all inputs on the previous Bluetooth target.' }
+}
+
+function Write-PeerStatus {
+    $peers = @(Get-PeerCatalog)
+    $mouse = Get-MouseClient
+    $selected = $null
+    if ($mouse) { $selected = $script:peerHandles[$mouse.Session.DeviceId.Id] }
+    $status = @{
+        peers = $peers
+        selectedPeer = $selected
+        keyboardActive = [int]($null -ne (Get-MatchingClient $keyboardReport))
+        absoluteActive = [int]($null -ne (Get-AbsoluteClient))
+    }
+    [Console]::WriteLine('TARGETS: ' + (ConvertTo-Json $status -Compress -Depth 3))
+}
+
 function Send-AbsoluteReport([int]$buttons, [int]$x, [int]$y) {
     if ($buttons -lt 0 -or $buttons -gt 7 -or $x -lt 0 -or $x -gt 32767 -or $y -lt 0 -or $y -gt 32767) {
         throw 'Absolute report out of range.'
     }
     $client = Get-AbsoluteClient
-    if ($null -eq $client) { throw 'Absolute and relative mouse reports require the same single active iPad.' }
+    if ($null -eq $client) { throw 'Absolute and relative mouse reports require the same single active device.' }
     if ($script:absoluteHeld -and $script:absoluteHeld.Client.Session.DeviceId.Id -ne $client.Session.DeviceId.Id) {
         Reset-AbsoluteButtons
         throw 'Absolute pointer recipient changed.'
@@ -138,7 +244,12 @@ $hid = $null
 $battery = $null
 $hidAdvertising = $false
 $batteryAdvertising = $false
+$script:mousePeer = $null
+$script:explicitPeer = $false
+$script:peerHandles = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
 $script:absoluteHeld = $null
+$script:relativeHeld = $null
+$script:keyboardHeld = $null
 try {
     $hid = New-GattProvider 0x1812
     $null = New-GattCharacteristic $hid.Service 0x2A4A $propertiesType::Read ([byte[]]@(0x11,0x01,0x00,0x02))
@@ -181,18 +292,25 @@ try {
         throw "Windows could not advertise the mouse: $($hid.AdvertisementStatus)."
     }
 
-    [Console]::WriteLine("READY: Pair $env:COMPUTERNAME from iPad Settings > Bluetooth.")
-    [Console]::WriteLine('Commands: status, move X Y, click, scroll N, report B X Y W, absolute B X Y, absolute-release, keys MODIFIER [KEYS], quit.')
+    [Console]::WriteLine("READY: Pair $env:COMPUTERNAME from device Settings > Bluetooth.")
+    [Console]::WriteLine('Commands: status, peer-select HANDLE, peer-clear, move X Y, click, scroll N, report B X Y W, absolute B X Y, absolute-release, keys MODIFIER [KEYS], quit.')
     while ($null -ne ($line = [Console]::ReadLine())) {
         $parts = $line.Trim() -split '\s+'
         try {
             switch ($parts[0]) {
-                'status' {
-                    $subscribers = @($mouseReport.SubscribedClients)
-                    $active = @($subscribers | Where-Object { $_.Session.SessionStatus -eq 'Active' }).Count
-                    $keyboardActive = @($keyboardReport.SubscribedClients | Where-Object { $_.Session.SessionStatus -eq 'Active' }).Count
-                    $absoluteActive = [int]($null -ne (Get-AbsoluteClient))
-                    [Console]::WriteLine("STATUS: $($hid.AdvertisementStatus); subscribers: $($subscribers.Count); active mouse connections: $active. active keyboard connections: $keyboardActive. active absolute connections: $absoluteActive.")
+                'status' { Write-PeerStatus }
+                'peer-select' {
+                    if ($parts.Count -ne 2) { throw 'Usage: peer-select HANDLE' }
+                    Select-InputPeer $parts[1]
+                    Write-PeerStatus
+                }
+                'peer-release' {
+                    Reset-PeerInput
+                    [Console]::WriteLine('OK: peer-release')
+                }
+                'peer-clear' {
+                    Select-InputPeer $null
+                    Write-PeerStatus
                 }
                 'move' {
                     if ($parts.Count -ne 3) { throw 'Usage: move X Y' }
@@ -254,9 +372,7 @@ try {
         }
     }
 } finally {
-    try { Reset-AbsoluteButtons } catch {}
-    try { if ($null -ne $keyboardReport) { Send-KeyboardReport 0 ([byte[]]@()) } } catch {}
-    try { if ($null -ne $mouseReport) { Send-MouseReport 0 0 0 0 } } catch {}
+    try { Reset-PeerInput } catch {}
     if ($batteryAdvertising) { $battery.StopAdvertising() }
     if ($hidAdvertising) { $hid.StopAdvertising() }
     if ($ownsMutex) { $instanceMutex.ReleaseMutex() }

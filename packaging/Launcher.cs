@@ -8,13 +8,14 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
 
-[assembly: AssemblyTitle("iPad 控制台")]
+[assembly: AssemblyTitle("iPhone / iPad 控制台")]
 [assembly: AssemblyProduct("iPad Control Console")]
-[assembly: AssemblyVersion("1.5.4.0")]
+[assembly: AssemblyVersion("1.5.91.0")]
+[assembly: AssemblyInformationalVersion("1.6.0-preview.2")]
 
 internal static class Launcher
 {
-    private const string Title = "iPad 控制台";
+    private const string Title = "iPhone / iPad 控制台";
     private const string Instance = @"Local\LiuJH12138.iPadControlConsole";
     [DllImport("user32.dll")]
     private static extern bool SetProcessDpiAwarenessContext(IntPtr context);

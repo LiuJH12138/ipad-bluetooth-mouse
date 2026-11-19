@@ -357,7 +357,7 @@ async function aimPointer(target, sample, move, validate, cache=null) {
     await track(Math.round(x*scale),Math.round(y*scale),cache.position);
   }
   if (!position && !await locate(sameSize ? cache.position : {x:frame.width/2,y:frame.height/2},!!sameSize))
-    throw Error('未能从投屏画面识别 iPad 指针。请在静止画面重试。');
+    throw Error('未能从投屏画面识别设备指针。请在静止画面重试。');
   let recovered=false;
   for (let attempt=0;attempt<14;attempt++) {
     validate();

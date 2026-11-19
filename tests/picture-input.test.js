@@ -10,12 +10,18 @@ const IpadKeyboard = require('../web/keyboard');
 const app = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
 
 class Control extends EventTarget {
+  children = [];
+  showModal() { this.open = true; }
+  close() { this.open = false; }
+  replaceChildren(...nodes) { this.children = nodes; }
+  append(child) { this.children.push(child); }
   contains(node) { return node === this; }
   classList = {toggle() {}, add() {}, remove() {}};
   setAttribute(name, value) { this[name] = value; }
   setPointerCapture(id) { this.captured = id; }
   getBoundingClientRect() { return {left: 0, top: 0, width: 420, height: 315}; }
   getContext() { return {drawImage() {}}; }
+  toBlob() {} // Keep JPEG encoding pending so a rotation cannot rely on an upload.
 }
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -29,7 +35,7 @@ async function waitFor(condition) {
 
 // Exercise app.js from USB start and the status poll through the actual DOM
 // event listeners. Replace only hardware, image recognition, and browser I/O.
-async function openConsole({alignmentGate, heldMoveGate, absolute = false, probeError} = {}) {
+async function openConsole({alignmentGate, heldMoveGate, absolute = false, probeError, family, status = {}, devices = [{id:"test-phone", family:"iPhone", driver:"ready"}], autoStart = true} = {}) {
   const controls = new Map();
   function element(id) {
     if (!controls.has(id)) {
@@ -50,9 +56,28 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
     const data = options.body && JSON.parse(options.body);
     let result = {};
     switch (url) {
-      case '/api/status': result = {active: 1, keyboardActive: 1, absoluteActive: Number(absolute), state: 'connected'}; break;
-      case '/api/frame/clear': break;
+      case '/api/devices': result = {devices}; break;
+      case '/api/assistant/disable': output.revoked = true; break;
+      case '/api/status': result = {activeDeviceId:output.device, active: 1, keyboardActive: 1, absoluteActive: Number(absolute), state: 'connected', ...status}; break;
+      case '/api/assistant/enable': result = {view:'shared-view'}; break;
+      case '/api/assistant/presence': return new Promise(()=>{});
+      case '/api/frame/clear': output.cleared = data; break;
+      case '/api/control/identify-relative':
+        output.identified = data;
+        result = {confirmation:'fresh-challenge'};
+        break;
+      case '/api/control/confirm-relative':
+        assert.equal(data.confirmation,'fresh-challenge');
+        output.bound = data;
+        status.needsPairing = false;
+        break;
+      case '/api/control/verify-peer':
+        assert.equal(output.lease, data.lease);
+        status.needsPairing = false;
+        output.bound = {...data};
+        break;
       case '/api/control/start':
+        (output.starts ||= []).push(data);
         assert.equal(output.lease, null);
         result = {lease: output.lease = 'lease-' + output.stops};
         break;
@@ -81,11 +106,15 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
         validate();
         await send(x,y);
       }
-      if (probeError) throw Error(probeError);
+      if (typeof probeError === 'function') probeError(output.starts.at(-1));
+      else if (probeError) throw Error(probeError);
       return {maxError:1};
     },
-    playUsbVideo({canvas, onFrame, signal}) {
-      canvas.width = 840; canvas.height = 630; onFrame(1);
+    playUsbVideo({deviceId, canvas, onFrame, signal}) {
+      output.device = deviceId;
+      canvas.width = 840; canvas.height = 630;
+      output.rotate = turns => onFrame(1, turns, family);
+      output.rotate(0);
       return new Promise(resolve => signal.addEventListener('abort', resolve, {once: true}));
     },
     async aimPointer(target, sample, move, validate) {
@@ -111,10 +140,12 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
   screen.requestPointerLock = async () => { document.pointerLockElement = screen; };
   document.exitPointerLock = () => { document.pointerLockElement = null; };
   element('speed').value = '1';
-  element('usb').onclick();
-  await waitFor(() => screen.width === 840);
-  await timers.get(1000)();
-  if (!absolute) await element('point').onclick();
+  if (autoStart) {
+    element('usb').onclick();
+    await waitFor(() => screen.width === 840);
+    await timers.get(1000)();
+    if (!absolute) await element('point').onclick();
+  }
   function emit(type, x, y, extra = {}) {
     const event = Object.assign(new Event(type, {cancelable: true}), {
       pointerId: 1, isPrimary: true, button: 0, clientX: x, clientY: y, ...extra
@@ -127,7 +158,7 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
     document.dispatchEvent(event);
     return event;
   }
-  return {window, screen, output, emit, element, key, document};
+  return {window, screen, output, emit, element, key, document, pollStatus: timers.get(1000)};
 }
 
 test('picture pointer events forward drag coordinates with the button held', async () => {
@@ -308,4 +339,226 @@ test('native deletion without a physical key code forwards one backspace and ign
   input.value='5';input.dispatchEvent(new Event('input'));
   await new Promise(setImmediate);
   assert.equal(output.stops,2);
+});
+
+test('preview identifies only the family of the current USB session', async () => {
+  for (const [family, label] of [['iPhone','iPhone'], ['iPad','iPad'], ['Apple','设备'], ['Private Name','设备']]) {
+    const {element} = await openConsole({family});
+    assert.equal(element('preview-heading').textContent, label === '设备' ? '设备屏幕' : label + ' 屏幕');
+    assert.equal(element('usb-canvas')['aria-label'], label + ' USB 实时画面');
+    assert.equal(element('source-status').textContent, label === '设备' ? 'USB 直连' : label + ' · USB 直连');
+    await element('stop-usb').onclick();
+    assert.equal(element('preview-heading').textContent, '设备屏幕');
+    assert.equal(element('picture-keyboard')['aria-label'], '设备画面键盘');
+  }
+});
+
+test('a half turn retires verified coordinates even when frame dimensions stay the same', async () => {
+  const {output,element} = await openConsole({absolute:true});
+  await element('verify-position').onclick();
+  await waitFor(()=>output.stops===1 && element('position-status').textContent==='绝对坐标直达');
+  await element('assistant').onclick();
+  output.rotate(2);
+  assert.equal(element('position-status').textContent,'等待验证');
+  assert.equal(output.cleared.view,'shared-view');
+  assert.ok(output.cleared.layout > 1);
+});
+
+test('rotating away and back while aiming cancels the stale picture click', async () => {
+  const gate = Promise.withResolvers();
+  const {output,emit} = await openConsole({alignmentGate:gate.promise});
+  emit('pointerdown',30,30);
+  emit('pointerup',30,30);
+  await waitFor(()=>output.targets.length===1);
+  output.rotate(2);
+  output.rotate(0);
+  gate.resolve();
+  await waitFor(()=>output.stops===1);
+  assert.ok(output.reports.every(report=>report.buttons===0));
+});
+
+test('portrait targeting follows the live canvas bounds across window and fullscreen', async () => {
+  const {document,element,screen,output,emit} = await openConsole();
+  screen.width=400; screen.height=840; output.rotate(1);
+  for (const [index,rect] of [
+    {left:10,top:20,width:600,height:420}, {left:0,top:0,width:1700,height:840}
+  ].entries()) {
+    screen.getBoundingClientRect=()=>rect;
+    if (index===1) {
+      document.fullscreenElement=element('monitor');
+      document.dispatchEvent(new Event('fullscreenchange'));
+    }
+    const tap = (x,y) => { emit('pointerdown',x,y); emit('pointerup',x,y); };
+    tap(rect.left+1, rect.top+rect.height/2);
+    tap(rect.left+rect.width/2, rect.top+rect.height/2);
+    await waitFor(()=>output.stops===index+1);
+    assert.deepEqual(output.targets.at(-1),{x:200,y:420});
+    assert.equal(output.targets.length,index+1);
+  }
+});
+
+test('Bluetooth retry clears its previous notice from the normal and fullscreen display',async()=>{
+  const status = {state:'error',active:0,error:'另一控制台正使用蓝牙，请在旧窗口断开蓝牙后重试。'};
+  const {element,document,pollStatus}=await openConsole({status,absolute:true});
+  assert.equal(element('notice').textContent,status.error);
+  document.fullscreenElement=element('monitor');
+  await pollStatus();
+  Object.assign(status,{state:'connected',active:1,error:''});
+  await pollStatus();
+  assert.equal(element('notice').textContent,'');
+  assert.equal(element('fullscreen-error').textContent,'');
+});
+
+test('multiple USB devices require a choice and switching retires the assistant and calibration', async () => {
+  const devices = [{family:'iPhone',model:'iPhone15,3',driver:'ready',id:'usb-A-123456'},
+    {family:'iPhone',model:'iPhone15,3',driver:'ready',id:'usb-B-654321'}];
+  const {element, output, pollStatus} = await openConsole({devices,absolute:true,autoStart:false});
+  await element('usb').onclick();
+  assert.equal(output.device,undefined);
+  assert.equal(element('device-picker').open,true);
+  const [one,two] = element('device-list').children;
+  assert.notEqual(one.textContent,two.textContent);
+  one.onclick();
+  await waitFor(()=>output.device===devices[0].id);
+  await pollStatus();
+  await element('verify-position').onclick();
+  await waitFor(()=>element('position-status').textContent==='绝对坐标直达');
+  await element('assistant').onclick();
+  await element('switch-device').onclick();
+  assert.equal(element('device-list').children[0].disabled,true);
+  element('device-list').children[1].onclick();
+  await waitFor(()=>output.device===devices[1].id);
+  await pollStatus();
+  assert.equal(output.revoked,true);
+  assert.equal(element('position-status').textContent,'等待验证');
+});
+
+test('multiple Bluetooth peers are identified with movement only before clicks or typing become available', async () => {
+  const peers = [
+    {id:'bound-to-other',absolute:true,boundDeviceId:'another-USB'},
+    {id:'wrong',absolute:true},{id:'right',absolute:true}
+  ];
+  const status = {needsPairing:true,peers};
+  const {element,output} = await openConsole({absolute:true,status,
+    probeError: req => { if (req.peerId==='wrong') throw Error('No matching cursor on the USB frame'); }});
+  assert.equal(element('point').hidden,true);
+  assert.equal(element('control').disabled,true);
+  assert.equal(element('verify-position').textContent,'核对蓝牙设备');
+  await element('verify-position').onclick();
+  assert.deepEqual(output.starts.map(r=>r.peerId),['wrong','right']);
+  assert.ok(output.reports.every(r=>r.kind==='absolute' && r.buttons===0));
+  assert.equal(output.bound.peerId,'right');
+  assert.equal(output.bound.deviceId,'test-phone');
+  assert.equal(output.lease,null);
+  assert.equal(element('point').hidden,false);
+  assert.equal(element('position-status').textContent,'绝对坐标直达');
+});
+
+test('an endpoint-only drag on a verified device preserves distinct held movement and release intervals', async () => {
+  const {output,element,emit} = await openConsole({absolute:true});
+  await element('verify-position').onclick();
+  await waitFor(()=>element('position-status').textContent==='绝对坐标直达' && output.lease===null);
+  output.reports.length = 0;
+  const ticks = [];
+  const push = output.reports.push.bind(output.reports);
+  output.reports.push = report => { ticks.push(performance.now()); return push(report); };
+  emit('pointerdown',50,150);
+  emit('pointerup',50,40);
+  await waitFor(()=>output.stops===2);
+  const held = output.reports.filter(report=>report.buttons===1);
+  assert.ok(held.length>=4, 'at least two intermediate positions before the endpoint');
+  assert.ok(held.every((report,i)=>report.kind==='absolute' && (!i || report.y<held[i-1].y) && report.x===held[0].x));
+  assert.ok(ticks[2]-ticks[1]>=40, 'button down is visible before motion');
+  assert.ok(ticks.at(-1)-ticks.at(-2)>=20, 'endpoint is visible before release');
+  assert.equal(output.reports.at(-1).buttons,0);
+  assert.equal(output.reports.at(-1).y,held.at(-1).y);
+});
+
+test('verified iPhone sends individual wheel ticks in the Windows scroll direction without any click', async () => {
+  const {output,element,emit} = await openConsole({family:'iPhone',absolute:true});
+  await element('verify-position').onclick();
+  await waitFor(()=>element('position-status').textContent==='绝对坐标直达' && output.lease===null);
+  for (const sign of [1,-1]) {
+    const before=output.stops;
+    output.reports.length=0;
+    emit('wheel',160,150,{deltaMode:0,deltaY:120*sign});
+    await waitFor(()=>output.reports.length>0);
+    output.rotate(0);
+    await waitFor(()=>output.reports.filter(r=>r.wheel).length===3);
+    // Another notch arriving during the last notification's tail must survive.
+    emit('wheel',160,150,{deltaMode:0,deltaY:40*sign});
+    await waitFor(()=>output.stops>before);
+    assert.ok(output.reports.every(r=>r.buttons===0));
+    assert.equal(output.reports[0].kind,'absolute');
+    assert.equal(output.reports[0].x,Math.round(320/839*32767));
+    assert.deepEqual(output.reports.slice(1,3).map(r=>[r.x,r.y,r.wheel]),[[1,0,0],[-1,0,0]]);
+    assert.deepEqual(output.reports.filter(r=>r.wheel).map(r=>r.wheel),[sign,sign,sign,sign]);
+  }
+});
+
+test('verified iPad preview wheel keeps native wheel reports', async () => {
+  const {output,element,emit} = await openConsole({family:'iPad',absolute:true});
+  await element('verify-position').onclick();
+  await waitFor(()=>element('position-status').textContent==='绝对坐标直达' && output.lease===null);
+  const before = output.stops;
+  output.reports.length=0;
+  emit('wheel',160,140,{deltaMode:0,deltaY:120});
+  await waitFor(()=>output.stops>before);
+  assert.ok(output.reports.every(r=>r.buttons===0));
+  assert.equal(output.reports.filter(r=>r.wheel).reduce((n,r)=>n+r.wheel,0),-3);
+});
+
+test('changing the USB layout during an iPhone wheel burst stops the remaining ticks', async () => {
+  const {output,element,emit} = await openConsole({family:'iPhone',absolute:true});
+  await element('verify-position').onclick();
+  await waitFor(()=>element('position-status').textContent==='绝对坐标直达' && output.lease===null);
+  output.reports.length=0;
+  emit('wheel',160,150,{deltaMode:0,deltaY:120});
+  await waitFor(()=>output.reports.length>0);
+  output.rotate(0);
+  await waitFor(()=>output.reports.some(r=>r.wheel));
+  output.rotate(2);
+  await waitFor(()=>output.lease===null && output.physicalButtons===0);
+  const count=output.reports.length;
+  await delay(70);
+  assert.equal(output.reports.length,count);
+});
+
+test('iPhone wheel checks the frame after moving the pointer to a distant pane', async () => {
+  const {output,element,emit} = await openConsole({family:'iPhone',absolute:true});
+  await element('verify-position').onclick();
+  await waitFor(()=>element('position-status').textContent==='绝对坐标直达' && output.lease===null);
+  for (const fresh of [false,true]) {
+    const before=output.stops;
+    output.reports.length=0;
+    emit('wheel',35,45,{deltaMode:0,deltaY:-120});
+    await waitFor(()=>output.reports.length>0);
+    if (fresh) output.rotate(0);
+    await delay(110);
+    assert.ok(output.reports.every(r=>!r.wheel));
+    await waitFor(()=>output.stops>before);
+    assert.ok(output.reports.every(r=>r.buttons===0));
+    assert.equal(output.reports.some(r=>r.wheel),fresh);
+  }
+});
+
+test('relative-only peer stays locked until the displayed pointer motion is confirmed for that device', async () => {
+  const status = {needsPairing:true,canIdentifyRelative:true,peers:[{id:'legacy-peer',absolute:false}]};
+  const {element,output,pollStatus} = await openConsole({status});
+  assert.equal(element('verify-position').textContent,'移动指针核对');
+  await element('verify-position').onclick();
+  assert.deepEqual(output.identified,{deviceId:'test-phone',peerId:'legacy-peer'});
+  assert.equal(element('confirm-relative').hidden,false);
+  assert.equal(element('control').disabled,true);
+  assert.equal(output.bound,undefined);
+  status.peers = [{id:'replacement-peer',absolute:false}];
+  await pollStatus();
+  assert.equal(element('confirm-relative').hidden,true);
+  await element('confirm-relative').onclick();
+  assert.equal(output.bound,undefined);
+  await element('verify-position').onclick();
+  await element('confirm-relative').onclick();
+  assert.equal(output.bound.peerId,'replacement-peer');
+  assert.equal(element('control').disabled,false);
+  assert.equal(element('position-status').textContent,'视觉定位');
 });

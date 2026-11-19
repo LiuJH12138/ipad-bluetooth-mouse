@@ -4,6 +4,8 @@
 
 **[下载 Windows x64 安装包（1.5.4）](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi)**　·　[使用手册](docs/guide.md)
 
+正在试用 iPhone？本地预览版 1.6.0-preview.2 支持 iPhone 和 iPad 同时接线。在控制台点「切换设备」，就能选择这次要看、要控制的设备。上方 1.5.4 安装包与下方演示对应已发布的 iPad 版。[iPhone 接入步骤](docs/guide.md#在-windows-上控制-iphone) · [真机测试进度](docs/validation.md#iphone-开发版)
+
 ## 真机演示
 
 点击下方播放 26 秒实录。点播放器的扬声器图标即可听普通话解说，全程附中文字幕。
@@ -26,7 +28,7 @@ https://github.com/user-attachments/assets/5f1bf887-d7e8-4cda-b56b-40dcded73699
 
 | 你想做什么 | 在控制台怎么做 |
 | --- | --- |
-| 演示、看屏或全屏预览 | 点「USB 直连」，然后按需收起左侧栏或切换全屏。已有投屏窗口可从「连接选项」共享。 |
+| 演示、看屏或全屏预览 | 点「USB 直连」，然后按需收起左侧栏或切换全屏。 |
 | 自己用键鼠操作 iPad | 「画面操控」可以直接点画面里的输入框并打字。「开始键鼠控制」会捕获电脑键鼠，适合连续移动、拖动和输入。按 `Esc` 释放。 |
 | 让有 Computer Use 的 AI 操作 | 验证坐标后进入「画面操控」。AI 可以在窗口或全屏中看图、点目标、输入文字。「允许助手控制」可保持关闭。 |
 | 让能执行本机命令的 AI 操作 | 保持投屏并退出手动控制，点「允许助手控制」。使用随附的 `assistant.js` 读图、点坐标、打字，再读图核对。用完点「停止助手控制」。[命令示例](docs/guide.md#本机助手控制) |

@@ -11,7 +11,7 @@
     change(code,down){if(!(code in codes)&&!(code in modifiers))return null;if(down)this.pressed.add(code);else this.pressed.delete(code);return this.report();}
     report(){let modifier=0;const keys=[];for(const code of this.pressed){if(code in modifiers){let value=modifiers[code];if(this.commandControl&&code==='ControlLeft')value=8;if(this.commandControl&&code==='ControlRight')value=128;modifier|=value;}else if(keys.length<6)keys.push(codes[code]);}return{modifiers:modifier,keys};}
   }
-  // USB HID usages for printable US keyboard keys. The iPad chooses the input language.
+  // USB HID usages for printable US keyboard keys. The connected device chooses the input language.
   const printable = new Map();
   for (const [plain, shifted, first] of [
     ['abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ',4],
@@ -27,7 +27,7 @@
   }
   function textStrokes(text) {
     const strokes = Array.from(text, ch => printable.get(ch));
-    if (strokes.some(stroke => !stroke)) throw Error('请使用英文、数字或半角标点。中文请在 iPad 切换输入法，发送拼音后选字。');
+    if (strokes.some(stroke => !stroke)) throw Error('请使用英文、数字或半角标点。中文请在设备上切换输入法，发送拼音后选字。');
     return strokes;
   }
   return{KeyboardState, textStrokes};

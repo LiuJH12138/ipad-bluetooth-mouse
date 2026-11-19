@@ -6,8 +6,7 @@ const crypto = require('node:crypto');
 const { BluetoothBridge } = require('./lib/bluetooth');
 const { UsbVideo } = require('./lib/usb-video');
 
-function createApp({ bridge, token, now = Date.now, publishAssistant }) {
-  const usb = new UsbVideo();
+function createApp({ bridge, token, now = Date.now, publishAssistant, usb = new UsbVideo() }) {
   let lease = null, frame = null;
   let assistant = null;
   const assistantRoutes = new Set(['GET /api/status','GET /api/frame','POST /api/control/start','POST /api/control/stop','POST /api/input','POST /api/assistant/sample']);
@@ -20,9 +19,99 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
     if (lease?.assistant) release();
     publishAssistant(server.address()?.port, null);
   }
-  function release() { lease = null; bridge.release(); }
+  function release() {
+    const wasProbe = lease?.probe;
+    lease = null;
+    // A probe only sent unpressed absolute moves. It has no keys/buttons to release.
+    if (!wasProbe) bridge.release();
+  }
+  function advanceAssistantLayout(layout) {
+    if (layout <= assistant.layout) return;
+    assistant.layout = layout;
+    frame = null;
+    assistant.sample?.cancel();
+    if (lease?.assistant) release();
+  }
+  function resetDeviceSession() {
+    revokeAssistant();
+    if (lease) release();
+    frame = null;
+  }
+  let source = null, guarded = false, selectingPeer = false;
+  let relativePeer = null, confirmation = null;
+  let workerGeneration = bridge.generation;
+  const bindings = new Map();
+  const availablePeers = () => bridge.peers || [];
+  const boundPeer = () => source && (bindings.get(source.id) || relativePeer);
+  const paired = () => !!boundPeer() && boundPeer() === bridge.selectedPeer;
+  const conflict = message => Object.assign(new Error(message), {status:409});
+
+  function relativeCandidate() {
+    const peers = availablePeers();
+    return source && !source.multiple && peers.length === 1 && !peers[0].absolute &&
+      ![...bindings].some(([device,id]) => device !== source.id && id === peers[0].id) ? peers[0].id : null;
+  }
+  function recordInventory(devices) {
+    if (devices.length > 1) guarded = true;
+    if (source) source.multiple = devices.length !== 1 || devices[0].id !== source.id;
+  }
+  async function checkRelativeTarget(deviceId,peerId) {
+    const owner = source, generation = bridge.generation;
+    if (!owner || owner.id !== deviceId || !peerId) throw conflict('需要唯一的 USB 设备和仅支持相对移动的蓝牙鼠标。');
+    const devices = await usb.devices();
+    if (owner !== source || generation !== bridge.generation) throw conflict('设备已改变，请重新核对。');
+    recordInventory(devices);
+    if (relativeCandidate() !== peerId) throw conflict('设备已改变，请重新核对。');
+    return owner;
+  }
+  async function routePeer(id) {
+    if (selectingPeer) throw conflict('蓝牙接收者正在切换，请稍后重试。');
+    const owner = source, generation = bridge.generation;
+    selectingPeer = true;
+    try {
+      const ok = await bridge.selectPeer(id);
+      if (!ok || source !== owner || bridge.generation !== generation || bridge.selectedPeer !== id) {
+        throw conflict('蓝牙或 USB 设备已改变，请重新验证。');
+      }
+    } finally { selectingPeer = false; }
+  }
+  function changeSource(next, lostId) {
+    resetDeviceSession();
+    confirmation = null; relativePeer = null;
+    if (lostId) bindings.delete(lostId);
+    source = next || null;
+    if (!source) {
+      if (guarded && bridge.selectedPeer && !selectingPeer) routePeer(null).catch(()=>{});
+      return;
+    }
+    // A single USB phone and a single Bluetooth receiver can still be two different devices.
+    guarded = true;
+    const id = boundPeer() || null;
+    if (guarded && id !== bridge.selectedPeer && (!id || availablePeers().some(p=>p.id===id))) {
+      routePeer(id).catch(()=>{}); // A fresh probe is available if restoration fails.
+    }
+  }
+  const singleInputDevice = () => bridge.active === 1 && !(bridge.keyboardActive > 1);
   function expire() {
-    if (lease && (now() - lease.time > 1200 || bridge.active !== 1 ||
+    if (bridge.generation !== workerGeneration) {
+      bindings.clear(); relativePeer = null; confirmation = null;
+      workerGeneration = bridge.generation;
+      resetDeviceSession();
+    }
+    const peers = availablePeers();
+    if (peers.length > 1) guarded = true;
+    if (confirmation && (confirmation.expires <= now() || relativeCandidate() !== confirmation.peerId || bridge.selectedPeer !== confirmation.peerId)) confirmation = null;
+    if (relativePeer && (relativeCandidate() !== relativePeer || bridge.selectedPeer !== relativePeer)) {
+      relativePeer = null; resetDeviceSession();
+    }
+    for (const [device, peer] of bindings) {
+      if (!peers.some(p=>p.id===peer)) bindings.delete(device);
+    }
+    if (lease && !lease.probe && guarded && !paired()) resetDeviceSession();
+    if (lease?.probe && (lease.source !== source || lease.peerId !== bridge.selectedPeer)) release();
+    if (assistant && singleInputDevice()) assistant.hadMouse = true;
+    if (assistant?.hadMouse && !singleInputDevice()) resetDeviceSession();
+    if (lease && (now() - lease.time > 1200 || !singleInputDevice() ||
         (lease.usedAbsolute && bridge.absoluteActive !== 1))) release();
     if (frame && now() - frame.time > 4000) frame = null;
     if (assistant && !assistant.presence && now() - assistant.seen > 4000) revokeAssistant();
@@ -60,7 +149,17 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
     if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) return json(res, 401, { error: '请通过项目启动器打开控制台。' });
     if (isAssistant && !assistantRoutes.has(req.method + ' ' + pathname)) return json(res, 403, { error: '该操作需要控制台授权。' });
     try {
-      if (req.method === 'GET' && pathname === '/api/status') return json(res, 200, { ...bridge.snapshot(), controlling: !!lease, frameAvailable: !!frame, assistantEnabled: !!assistant, fullscreen: !!frame?.fullscreen,
+      if (req.method === 'GET' && pathname === '/api/devices') {
+        const devices = await usb.devices();
+        recordInventory(devices);
+        expire();
+        return json(res,200,{devices,activeDeviceId:source?.id || null});
+      }
+      if (req.method === 'GET' && pathname === '/api/status') return json(res, 200, { ...bridge.snapshot(),
+        ...(!isAssistant && {activeDeviceId:source?.id || null, needsPairing:!!source && guarded && !paired(),
+          verifiedPeerId:boundPeer() || null, canIdentifyRelative:!!relativeCandidate() && !paired(), peers:availablePeers().map(peer=>({...peer,
+            boundDeviceId:[...bindings].find(([,id])=>id===peer.id)?.[0] || null}))}),
+        controlling: !!lease, frameAvailable: !!frame, assistantEnabled: !!assistant, fullscreen: !!frame?.fullscreen,
         picture: frame && frame.view === assistant?.view ? frame.picture : undefined });
       if (req.method === 'GET' && pathname === '/api/frame') {
         if (!frame || (isAssistant && frame.view !== assistant.view)) return json(res, 404, { error: '尚未允许画面读取，或画面已过期。' });
@@ -79,18 +178,31 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
         sample.done({bytes,w,h,serial:req.headers['x-serial']});
         return json(res,200,{ok:true});
       }
-      if (pathname === '/api/usb/video') { await usb.stream(res); return; }
+
       if (pathname === '/api/frame') {
         const bytes = await body(req, 2 * 1024 * 1024);
         if (req.headers['content-type'] !== 'image/jpeg' || bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216 || bytes.at(-2) !== 255 || bytes.at(-1) !== 217) return json(res, 400, { error: '无效 JPEG' });
+        const view = req.headers['x-assistant-view'];
+        if (view && view !== assistant?.view) return json(res,409,{error:'画面授权已结束。'});
+        if (view) {
+          const layout = Number(req.headers['x-layout'] || 0);
+          if (!Number.isSafeInteger(layout) || layout < 0) return json(res,400,{error:'无效画面布局。'});
+          if (layout < assistant.layout) return json(res,409,{error:'画面方向已改变。'});
+          advanceAssistantLayout(layout);
+        }
         const picture = {layout:req.headers['x-layout'],width:Number(req.headers['x-width']),height:Number(req.headers['x-height']),verified:req.headers['x-verified']==='true'};
-        frame = { bytes, picture, time: now(), fullscreen: req.headers['x-view-mode'] === 'fullscreen', view: req.headers['x-assistant-view'] };
+        frame = { bytes, picture, time: now(), fullscreen: req.headers['x-view-mode'] === 'fullscreen', view };
         if (assistant && req.headers['x-assistant-view'] === assistant.view) assistant.seen = now();
         return json(res, 200, { ok: true });
       }
       const data = JSON.parse((await body(req, 4096)).toString() || '{}');
       expire();
       if (isAssistant && (assistant?.token !== credential || (pathname !== '/api/control/stop' && frame?.view !== assistant?.view))) return json(res, 409, { error: '等待已授权窗口恢复实时画面。' });
+      if (pathname === '/api/usb/video') {
+        const {deviceId} = data;
+        if (deviceId !== undefined && (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId))) return json(res,400,{error:'无效 USB 设备。'});
+        await usb.stream(res, changeSource, deviceId); return;
+      }
       if (pathname === '/api/assistant/presence') {
         if (!assistant || assistant.view !== data.view || assistant.presence) return json(res,409,{error:'分享窗口已更改。'});
         const owner = assistant;
@@ -103,21 +215,72 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
       if (pathname === '/api/assistant/enable') {
         if (!publishAssistant) return json(res, 409, { error: '当前服务未配置助手入口。' });
         revokeAssistant();
-        const next = { token: crypto.randomBytes(32).toString('hex'), view: crypto.randomUUID(), seen: now() };
+        const next = { layout:0, hadMouse: singleInputDevice(), token: crypto.randomBytes(32).toString('hex'), view: crypto.randomUUID(), seen: now() };
         publishAssistant(server.address().port, next.token);
         assistant = next; frame = null;
         return json(res, 200, { view: next.view });
       }
       if (pathname === '/api/assistant/disable') { revokeAssistant(); frame = null; return json(res, 200, {ok:true}); }
-      if (pathname === '/api/frame/clear') { frame = null; return json(res, 200, { ok: true }); }
+      if (pathname === '/api/frame/clear') {
+        if (data.view) {
+          if (data.view !== assistant?.view) return json(res,409,{error:'画面授权已结束。'});
+          if (!Number.isSafeInteger(data.layout) || data.layout < 1) return json(res,400,{error:'无效画面布局。'});
+          advanceAssistantLayout(data.layout);
+        } else frame = null;
+        return json(res, 200, { ok: true });
+      }
       if (pathname === '/api/connect') { return json(res, 200, await bridge.connect()); }
-      if (pathname === '/api/disconnect') { release(); await bridge.close(); return json(res, 200, bridge.snapshot()); }
+      if (pathname === '/api/disconnect') { resetDeviceSession(); await bridge.close(); return json(res, 200, bridge.snapshot()); }
+      if (pathname === '/api/control/identify-relative') {
+        const {deviceId,peerId} = data;
+        const owner = await checkRelativeTarget(deviceId,peerId);
+        if (lease || selectingPeer || paired()) throw conflict('请先停止当前控制。');
+        confirmation = null;
+        revokeAssistant();
+        await routePeer(peerId);
+        if (source !== owner || relativeCandidate() !== peerId || !bridge.report(0,48,0,0)) throw conflict('指针未移动，请重新核对。');
+        confirmation = {peerId, nonce:crypto.randomUUID(), expires:now()+60000};
+        return json(res,200,{confirmation:confirmation.nonce});
+      }
+      if (pathname === '/api/control/confirm-relative') {
+        const ticket = confirmation;
+        if (!ticket || ticket.nonce !== data.confirmation || ticket.peerId !== data.peerId) throw conflict('核对已失效，请重新移动指针。');
+        await checkRelativeTarget(data.deviceId,data.peerId);
+        if (confirmation !== ticket || selectingPeer || lease || ticket.expires <= now() || bridge.selectedPeer !== ticket.peerId) throw conflict('核对已失效，请重新移动指针。');
+        confirmation = null;
+        relativePeer = ticket.peerId;
+        return json(res,200,{ok:true});
+      }
       if (pathname === '/api/control/start') {
-        if (lease) return json(res, 409, { error: '另一个页面正在控制，请先停止。' });
-        if (bridge.active !== 1) return json(res, 409, { error: '请先连接一台 iPad。' });
+        if (lease || selectingPeer) throw conflict('正在控制或切换设备，请稍后重试。');
+        if (data.deviceId && data.deviceId !== source?.id) throw conflict('投屏设备已改变，请重新选择。');
+        if (data.probe) {
+          if (isAssistant) return json(res,403,{error:'请在控制台验证蓝牙设备。'});
+          const id = data.peerId;
+          if (!source || data.deviceId !== source.id || !availablePeers().some(p=>p.id===id && p.absolute) ||
+              [...bindings].some(([device,peer])=>peer===id && device!==source.id)) throw conflict('当前设备没有可验证的蓝牙接收者。');
+          const owner = source;
+          revokeAssistant();
+          await routePeer(id);
+          if (owner !== source) throw conflict('设备已改变，请重新验证。');
+          lease = {id:crypto.randomUUID(), time:now(), seq:0, assistant:false, probe:true, peerId:id, source, points:new Set()};
+          return json(res,200,{lease:lease.id});
+        }
+        if (guarded && (!paired() || (!isAssistant && data.deviceId !== source?.id))) {
+          throw conflict('请先在当前设备上完成蓝牙指针验证。');
+        }
+        if (!singleInputDevice()) return json(res, 409, { error: '请先连接一台 iPhone 或 iPad。' });
         lease = { id: crypto.randomUUID(), time: now(), seq: 0, assistant: isAssistant }; return json(res, 200, { lease: lease.id });
       }
       if (!lease || data.lease !== lease.id || lease.assistant !== isAssistant) return json(res, 409, { error: '控制已释放，请重新开始。' });
+      if (pathname === '/api/control/verify-peer') {
+        if (!lease.probe || lease.points.size < 3 || !source || data.deviceId !== source.id ||
+            lease.source !== source || data.peerId !== lease.peerId || data.peerId !== bridge.selectedPeer) {
+          throw conflict('蓝牙验证尚未完成，或当前设备已改变。');
+        }
+        bindings.set(source.id,lease.peerId);
+        return json(res,200,{ok:true});
+      }
       if (data.layout && data.layout !== frame?.picture.layout) return json(res,409,{error:'画面已改变，请重新读取。'});
       if (pathname === '/api/assistant/sample' && isAssistant) {
         const owner = assistant;
@@ -142,17 +305,18 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
       if (pathname === '/api/input') {
         const { seq } = data;
         if(!Number.isSafeInteger(seq) || seq <= lease.seq) return json(res,400,{error:'过期输入'});
+        if (lease.probe && (data.kind !== 'absolute' || data.buttons !== 0)) throw conflict('验证时只允许移动指针。');
         let accepted;
         if(data.kind === 'keyboard') {
           const { modifiers,keys }=data;
           if(!Number.isSafeInteger(modifiers)||modifiers<0||modifiers>255||!Array.isArray(keys)||keys.length>6||new Set(keys).size!==keys.length||keys.some(k=>!Number.isSafeInteger(k)||k<4||k>101)) return json(res,400,{error:'无效键盘报告'});
-          if(bridge.keyboardActive!==1) return json(res,409,{error:'键盘尚未连接。升级后请在 iPad 忽略旧蓝牙设备并重新配对。'});
+          if(bridge.keyboardActive!==1) return json(res,409,{error:'键盘尚未连接。升级后请在移动设备上忽略旧蓝牙设备并重新配对。'});
           accepted=bridge.keys(modifiers,keys);
         } else if(data.kind === 'absolute') {
           const {buttons,x,y}=data;
           if (![buttons,x,y].every(Number.isSafeInteger) || buttons<0 || buttons>7 ||
               x<0 || x>32767 || y<0 || y>32767) return json(res,400,{error:'无效绝对坐标报告'});
-          if (bridge.absoluteActive!==1) return json(res,409,{error:'当前 iPad 未订阅绝对坐标报告。'});
+          if (bridge.absoluteActive!==1) return json(res,409,{error:'当前设备未订阅绝对坐标报告。'});
           lease.usedAbsolute = true;
           accepted=bridge.absolute(buttons,x,y);
         } else {
@@ -164,6 +328,7 @@ function createApp({ bridge, token, now = Date.now, publishAssistant }) {
         if (data.kind === 'absolute') {
           accepted = await accepted;
           if (lease?.id !== data.lease) return json(res,409,{error:'控制已释放。'});
+          if (accepted && lease.probe && lease.points.size < 3) lease.points.add(data.x + ',' + data.y);
         }
         if(!accepted){release();return json(res,409,{error:'蓝牙繁忙或断开，已释放控制。'});}
         if (isAssistant || data.settle === true) {

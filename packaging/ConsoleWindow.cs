@@ -25,7 +25,7 @@ internal sealed class ConsoleWindow : Form
     internal ConsoleWindow(Uri session)
     {
         this.session = session;
-        Text = "iPad 控制台";
+        Text = "iPhone / iPad 控制台";
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(1120, 740);

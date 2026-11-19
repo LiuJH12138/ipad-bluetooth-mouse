@@ -47,13 +47,13 @@ function describeH264(bytes) {
   return { codec, key };
 }
 
-async function playUsbVideo({ token, canvas, signal, onFrame }) {
+async function playUsbVideo({ token, deviceId, canvas, signal, onFrame }) {
   if (!globalThis.VideoDecoder) throw new Error('USB 解码需要支持 WebCodecs 的 Chrome 或 Edge。');
   const controller = new AbortController();
   const abort = () => controller.abort();
   signal.addEventListener('abort', abort, { once: true });
   if (signal.aborted) abort();
-  let codec, waitingForKey = true, failure;
+  let codec, waitingForKey = true, failure, deviceFamily;
   const submissions = new Map();
   const context = canvas.getContext('2d', { alpha: false });
   const decoder = new VideoDecoder({
@@ -72,7 +72,7 @@ async function playUsbVideo({ token, canvas, signal, onFrame }) {
         context.setTransform(1, 0, 0, 1, width / 2, height / 2);
         context.rotate(turns * Math.PI / 2);
         context.drawImage(frame, -w / 2, -h / 2, w, h);
-        onFrame(performance.now() - submitted, turns);
+        onFrame(performance.now() - submitted, turns, deviceFamily);
       } finally { frame.close(); }
     },
     error(error) { failure = error; abort(); }
@@ -97,9 +97,12 @@ async function playUsbVideo({ token, canvas, signal, onFrame }) {
   });
   try {
     const response = await fetch('/api/usb/video', {
-      method: 'POST', headers: { 'X-Control-Token': token }, signal: controller.signal
+      method: 'POST', headers: { 'X-Control-Token': token, 'Content-Type': 'application/json' },
+      body: deviceId ? JSON.stringify({deviceId}) : undefined, signal: controller.signal
     });
     if (!response.ok) throw new Error((await response.json()).error || 'USB 采集失败。');
+    if (deviceId && response.headers.get('X-Apple-Device-Id') !== deviceId) throw Error('USB 设备已改变，请重新选择。');
+    deviceFamily = response.headers.get('X-Apple-Device-Family');
     const reader = response.body.getReader();
     while (!controller.signal.aborted) {
       const { value, done } = await reader.read();

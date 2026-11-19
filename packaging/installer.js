@@ -39,7 +39,7 @@ function directory(relative) {
 const tree = directory('');
 const manifest = `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
- <Product Id="*" UpgradeCode="5CC3C449-CC44-4B5E-B6B6-0E930FBAB762" Name="iPad 控制台" Manufacturer="LiuJH12138" Version="1.5.4" Language="2052" Codepage="936">
+ <Product Id="*" UpgradeCode="5CC3C449-CC44-4B5E-B6B6-0E930FBAB762" Name="iPhone 与 iPad 控制台 1.6.0 预览版 2" Manufacturer="LiuJH12138" Version="1.5.91" Language="2052" Codepage="936">
   <Package InstallerVersion="500" InstallScope="perUser" Platform="x64" Compressed="yes" SummaryCodepage="936"/>
   <MajorUpgrade AllowSameVersionUpgrades="yes" DowngradeErrorMessage="已安装更新版本的 iPad 控制台。"/>
   <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
@@ -49,7 +49,7 @@ const manifest = `<?xml version="1.0" encoding="utf-8"?>
     <RegistrySearch Id="ExistingInstallDirectory" Root="HKCU" Key="Software\\LiuJH12138\\iPadControlConsole" Name="InstallDirectory" Type="raw" Win64="yes"/>
   </Property>
   <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR"/>
-  <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="启动 iPad 控制台"/>
+  <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="启动 iPhone 与 iPad 控制台"/>
   <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
   <CustomAction Id="LaunchConsole" FileKey="AppExe" ExeCommand="" Return="asyncNoWait" Impersonate="yes"/>
   <UIRef Id="WixUI_InstallDir"/>

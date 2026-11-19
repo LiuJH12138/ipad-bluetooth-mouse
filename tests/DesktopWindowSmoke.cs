@@ -41,7 +41,7 @@ internal static class DesktopWindowSmoke
                     if (core == null) throw new Exception("WebView2 did not initialize");
                     await CheckScript(core, "api('status').then(s => s.state === 'idle')", "authenticated console");
                     await CheckScript(core, "VideoDecoder.isConfigSupported({codec:'avc1.42E01E',optimizeForLatency:true}).then(c=>c.supported)", "H.264 decoder");
-                    await CheckScript(core, "typeof navigator.mediaDevices.getDisplayMedia === 'function'", "window picker API");
+                    await CheckScript(core, "document.getElementById('usb-canvas') instanceof HTMLCanvasElement && document.getElementById('device-picker') instanceof HTMLDialogElement && !document.querySelector('video, #share')", "USB preview and device picker");
                     var bounds = form.Bounds;
                     await CheckScript(core, "monitor.requestFullscreen().then(()=>document.fullscreenElement === monitor)", "enter fullscreen");
                     await Task.Delay(150);

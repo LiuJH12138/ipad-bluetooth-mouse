@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>iPad 控制台</title>
+  <title>iPhone / iPad 控制台</title>
   <link rel="icon" type="image/x-icon" href="/console.ico">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -11,7 +11,7 @@
   <main class="workspace">
     <aside id="inspector" class="inspector" aria-label="设备连接和设置">
       <header class="masthead">
-        <h1><img src="/console.ico" width="28" height="28" alt="">iPad 控制台</h1>
+        <h1><img src="/console.ico" width="28" height="28" alt="">iPhone / iPad 控制台</h1>
       </header>
       <section class="panel" aria-labelledby="connections-heading">
         <h2 id="connections-heading">设备连接</h2>
@@ -23,12 +23,12 @@
         <div class="row-actions">
           <button id="connect">连接蓝牙</button>
           <button id="disconnect" hidden>断开蓝牙</button>
-          <button id="stop-share" hidden>停止投屏</button>
+          <button id="switch-device" hidden>切换设备</button>
+          <button id="stop-usb" hidden>停止投屏</button>
         </div>
         <details class="disclosure">
-          <summary>连接选项</summary>
-          <p>首次配对时，在 iPad 蓝牙设置中选择这台电脑。</p>
-          <button id="share">共享已有窗口</button>
+          <summary>连接说明与状态</summary>
+          <p>首次配对时，在设备的蓝牙设置中选择这台电脑。使用 iPhone 时，请开启「设置 → 辅助功能 → 触控 → 辅助触控」。</p>
           <p id="video-status" class="diagnostics">等待画面</p>
         </details>
       </section>
@@ -37,38 +37,47 @@
         <p id="position-status"></p>
         <p id="position-detail" class="hint" aria-live="polite"></p>
         <button id="verify-position">验证坐标</button>
+        <button id="confirm-relative" hidden>我已看到指针移动</button>
         <details class="disclosure">
           <summary>验证说明</summary>
-          <p>验证时请停下鼠标。控制台会核对三个落点，窗口与全屏共用结果。旋转 iPad 或重新连接后需重新验证。</p>
+          <p>验证时请停下鼠标。控制台会核对三个落点，窗口与全屏共用结果。旋转设备或重新连接后需重新验证。</p>
         </details>
       </section>
       <details class="panel settings">
         <summary>键鼠设置</summary>
-        <label class="check"><span>将 Ctrl 映射为 iPad Command</span><input id="command-control" type="checkbox" role="switch" checked></label>
+        <label class="check"><span>将 Ctrl 映射为 Command</span><input id="command-control" type="checkbox" role="switch" checked></label>
         <label class="range-label" for="speed">捕获模式指针速度 <output for="speed" id="speed-value">1.0×</output></label>
         <input id="speed" type="range" min="0.2" max="2" step="0.1" value="1">
-        <p class="hint">输入拼音时，电脑使用英文输入法，在 iPad 上选字。</p>
+        <p class="hint">输入拼音时，电脑使用英文输入法，在投屏设备上选字。</p>
       </details>
     </aside>
     <section id="monitor" class="monitor" aria-labelledby="preview-heading">
       <header class="monitor-head">
         <div class="window-title">
           <button id="toggle-inspector" aria-label="收起设备侧栏" title="收起设备侧栏" aria-controls="inspector" aria-expanded="true"><span aria-hidden="true"></span></button>
-          <h2 id="preview-heading">iPad 屏幕</h2>
+          <h2 id="preview-heading">设备屏幕</h2>
         </div>
         <button id="fullscreen" aria-controls="monitor" hidden>全屏</button>
       </header>
+      <dialog id="device-picker" aria-labelledby="device-picker-title">
+        <h3 id="device-picker-title">选择 USB 设备</h3>
+        <p id="device-picker-status" role="status"></p>
+        <div id="device-list"></div>
+        <div class="row-actions">
+          <button id="refresh-devices">刷新</button>
+          <button id="close-devices">取消</button>
+        </div>
+      </dialog>
       <div id="stage">
-        <canvas id="usb-canvas" tabindex="-1" hidden aria-label="iPad USB 实时画面"></canvas>
-        <textarea id="picture-keyboard" tabindex="-1" aria-label="iPad 画面键盘" autocomplete="off" autocapitalize="off" spellcheck="false" disabled></textarea>
-        <video id="video" autoplay muted playsinline aria-label="共享窗口实时画面"></video>
+        <canvas id="usb-canvas" tabindex="-1" hidden aria-label="设备 USB 实时画面"></canvas>
+        <textarea id="picture-keyboard" tabindex="-1" aria-label="设备画面键盘" autocomplete="off" autocapitalize="off" spellcheck="false" disabled></textarea>
         <div id="placeholder">
           <div class="pairing-art" aria-hidden="true">
             <div class="tablet"><div class="tablet-display"><i></i><b></b><em></em></div></div>
             <div class="usb-cable"></div>
           </div>
-          <h3>连接你的 iPad</h3>
-          <p>用数据线连接电脑，并解锁 iPad。</p>
+          <h3>连接 iPhone 或 iPad</h3>
+          <p>用数据线将设备连接到电脑，并解锁设备。</p>
           <button id="usb" class="primary">USB 直连</button>
         </div>
       </div>
