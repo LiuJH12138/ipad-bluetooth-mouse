@@ -21,6 +21,8 @@
 
 [窗口操作示例](docs/guide.md#ai-如何操作-ipad) · [本机命令示例](docs/guide.md#本机助手控制)
 
+**在 Codex 中使用。** 可以告诉 Codex：「从 GitHub 仓库 `LiuJH12138/ipad-bluetooth-mouse` 安装 `skills/ipad-console-control`。」在新会话中用 `$ipad-console-control` 指定设备和任务，技能会按当前助手的能力选择窗口或本机命令。[查看技能](https://github.com/LiuJH12138/ipad-bluetooth-mouse/tree/main/skills/ipad-console-control)
+
 ## 界面展示
 
 **连接设备。** 首页分别显示 USB 投屏和蓝牙键鼠的状态。选择「一键配置」可以一起准备两者，选择「仅投屏」可以直接看屏。

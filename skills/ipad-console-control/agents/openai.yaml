@@ -1,0 +1,4 @@
+interface:
+  display_name: "iPhone 与 iPad 真机控制"
+  short_description: "通过 Windows 控制台看见并操作真机，支持桌面操作与本机命令两种方式"
+  default_prompt: "用 $ipad-console-control 在指定设备的设置里搜索 7319，读回结果后清空搜索框。"
