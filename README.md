@@ -1,55 +1,65 @@
-# iPad 控制台 · iPad Control Console
+# iPad Control Console
 
-在 Windows 上通过 USB 实时查看 iPhone 或 iPad 的屏幕，用电脑的鼠标点按、拖动，用键盘打字。键鼠通过蓝牙连接，移动设备上无需安装 App。
+**让电脑上的 AI 助手看见并操作你的 iPad 和 iPhone。**
 
-**[下载多设备预览版 1.6.0-preview.5（Windows x64）](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.6.0-preview.5/iPad-Control-Console-1.6.0-preview.5-win-x64.msi)**　·　[下载稳定版 1.5.4](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi)　·　[使用手册](docs/guide.md)
+以前，让 AI 帮忙找一个设置，往往要先截屏发给它，照着回答点几下，再截一张问「接下来呢？」。iPad Control Console 把设备的实时画面带到 Windows，也把鼠标和键盘操作送回设备。支持操作电脑窗口或运行本机命令的 AI 助手，可以自己看屏、点按、打字，再看一眼结果。手机和平板上无需安装 App。
+
+**[下载 1.6.0 稳定版 · Windows x64 安装包](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.6.0/iPad-Control-Console-1.6.0-win-x64.msi)**　·　[发布说明与 SHA-256 校验](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/tag/v1.6.0)　·　[使用手册](docs/guide.md)
+
+## 第一次让 AI 操作设备
+
+把 iPad 停在「设置」首页，连接控制台后，可以给能操作这台电脑的 AI 助手一个小任务。
+
+> 帮我点开设置里的搜索框，输入 7319。看一眼 iPad 屏幕，告诉我框里实际显示了什么，然后清空它。
+
+助手可以从投屏里找到搜索框，点击后确认光标已经出现，再输入数字、读回文字。你能在控制台看到每一步。已有的 AI 助手负责理解任务，控制台负责提供画面和键鼠输入。
+
+| 你的 AI 助手能做什么 | 怎样接入 |
+| --- | --- |
+| 看见并操作 Windows 窗口 | 在控制台选择 **画面操控**，把窗口交给助手。它可以直接点投屏、在当前输入框打字。「允许助手控制」可保持关闭。 |
+| 在这台电脑上运行命令 | 保持投屏，退出手动操控，再打开 **允许助手控制**。助手通过安装包内的 `assistant.js` 读图、点击和输入。用完点 **停止助手控制**。 |
+
+[窗口操作示例](docs/guide.md#ai-如何操作-ipad) · [本机命令示例](docs/guide.md#本机助手控制)
 
 ## 界面展示
 
-**连接设备。** 用数据线连接并解锁设备，点 **一键配置** 开始投屏和键鼠设置。只想看屏幕时，点 **仅投屏**。[首次配置与故障恢复](docs/guide.md#首次配置)
+**连接设备。** 首页分别显示 USB 投屏和蓝牙键鼠的状态。选择「一键配置」可以一起准备两者，选择「仅投屏」可以直接看屏。
 
-![控制台首页。左侧分别显示 USB 投屏和蓝牙键鼠状态，中央提供「一键配置」和「仅投屏」。](docs/media/console-home.png)
+![控制台首页，左侧显示 USB 投屏和蓝牙键鼠的状态，中央提供一键配置和仅投屏两个入口。](docs/media/console-home.png)
 
-**确认正在控制哪台设备。** 配对向导同时列出所选移动设备和要连接的电脑名称。多台设备可以保持连接，点 **切换设备** 选择当前目标。窗口标题和全屏提示都会显示设备名与八位短码，也可在 **连接详情** 保存本机别名。[多设备操作](docs/guide.md#同时接着-iphone-和-ipad) · [双机实测记录](docs/validation.md)
+**确认控制目标。** 同时接上 iPad 和 iPhone 时，窗口标题显示当前设备的名称和八位短码。配对向导还会显示电脑的蓝牙名称，方便在正确的手机或平板上完成配对。
 
-![预览版配对界面。示例设备「工作室的演示 iPad」处于仅预览状态，向导提示在设备上选择电脑 STUDIO-PC。](docs/media/console-pairing.png)
+![配对向导用示例设备展示所选 iPad 的名称、短码，以及应在蓝牙设置里选择的电脑 STUDIO-PC。](docs/media/console-pairing.png)
 
-## 快速开始（稳定版 1.5.4）
+## 安装与连接
 
-准备一台 **Windows 11 x64** 电脑、一根支持数据传输的 USB 线，以及一台已解锁的 iPad。需要键鼠控制时，电脑的蓝牙适配器须支持 **BLE 外设角色**。
+准备一台 **Windows 11 x64** 电脑、一根支持数据传输的 USB 线，以及已解锁的 iPad 或 iPhone。发送键鼠输入需要电脑的蓝牙适配器支持 **BLE 外设角色**，也就是能把电脑当作蓝牙键鼠来连接。
 
-1. **安装并打开控制台。** 双击 MSI，按中文向导完成安装。旧版用户可先从托盘菜单选择「退出应用」再升级。
-2. **先接画面。** 用数据线连接 iPad，在 iPad 上确认信任电脑，然后点「USB 直连」。出现实时画面后就能点右上角「全屏」。只想看屏幕，到这里即可。首次配置的电脑需要 Apple USB 驱动和设备过滤驱动。[USB 配置说明](docs/guide.md#usb-配置)
-3. **再接键鼠。** 点「连接蓝牙」，在 iPad 的蓝牙设置里选择这台电脑并确认配对。要用 Windows 箭头直接点画面，可在 iPad 打开背景简单的静止页面，点控制台的「验证坐标」，看到「绝对坐标直达」后选「画面操控」。
+1. **安装控制台。** 下载页面顶部的 MSI，双击安装。已有版本可先在系统托盘退出控制台，再运行安装包升级。
+2. **接入设备。** 用 USB 数据线连接设备，按提示在设备上确认信任电脑。在控制台点 **一键配置**，如果接了多台，就选择本次要使用的那台。
+3. **核对键鼠。** 按向导在设备上开启辅助触控、配对电脑蓝牙，并停在清晰的静止页面。控制台移动指针，在当前投屏里确认三个落点，再开放相应的操控方式。
 
-## 选择操作方式
+[首次配置与驱动](docs/guide.md#首次配置) · [连接故障排查](docs/guide.md#边界与常见问题)
 
-| 你想做什么 | 在控制台怎么做 |
-| --- | --- |
-| 演示、看屏或全屏预览 | 点「USB 直连」，然后按需收起左侧栏或切换全屏。 |
-| 自己用键鼠操作 iPad | 「画面操控」可以直接点画面里的输入框并打字。「开始键鼠控制」会捕获电脑键鼠，适合连续移动、拖动和输入。按 `Esc` 释放。 |
-| 让有 Computer Use 的 AI 操作 | 验证坐标后进入「画面操控」。AI 可以在窗口或全屏中看图、点目标、输入文字。「允许助手控制」可保持关闭。 |
-| 让能执行本机命令的 AI 操作 | 保持投屏并退出手动控制，点「允许助手控制」。使用随附的 `assistant.js` 读图、点坐标、打字，再读图核对。用完点「停止助手控制」。[命令示例](docs/guide.md#本机助手控制) |
+## 控制权与隐私
 
-输入中文时，电脑切到英文输入法，在 iPad 上用拼音选字。USB 直连只传画面。当前版本支持鼠标和键盘输入，多点触摸与 Apple Pencil 尚未支持。滚轮响应取决于 iPad App。[键鼠操作说明](docs/guide.md#在投屏画面上使用键鼠)
+- **同时连多台，一次操作一台。** 设备名称相似时，可在「连接详情」设置本机别名。切换设备会释放按住的键和鼠标按钮，并结束上一台设备的脚本授权。
+- **画面停住，输入也会暂停。** 超过 4 秒没有新的 USB 解码帧时，助手读图和普通输入会暂停。再次操作时，控制台先移动指针检查新画面，核对失败就取消这次操作。
+- **画面在本机解码。** 脚本读图需要单独授权。使用外部 AI 服务时，它能看到的画面以及如何处理这些数据，取决于你交给它的窗口、工具和服务设置。
 
-## 隐私与授权
+## 验证与支持
 
-日常投屏时，画面在电脑本机解码。开启「允许助手控制」后，本机服务只在内存中保留最近一帧供已授权工具读取。超过 4 秒没有新的 USB 解码帧，助手读图会暂停。下一次操作会先用无按键的指针移动核对画面，确认画面恢复且目标一致才继续。把画面交给外部 AI 后，后续处理取决于该服务。[助手接口与授权说明](docs/guide.md#助手如何读取画面)
+iPad 和 iPhone SE 已完成双机实测。在两台设备的搜索框分别输入不同数字，来回切换后，各自只保留自己的内容。SE 使用原配对重新连接时，iPad 持续在线。项目的 199 项自动化测试覆盖设备切换、按键释放、画面冻结和断线恢复等场景。[查看验收记录](docs/validation.md)
 
-## 开发与支持
+当前支持鼠标与键盘操作。中文可通过设备端拼音输入法选字。多点触摸和 Apple Pencil 输入暂未支持。
 
-- [源码启动与环境要求](docs/guide.md#从源码运行) · [本机 API](docs/guide.md#本机接口) · [运行测试与构建 MSI](docs/guide.md#验证与开发)
-- [USB、蓝牙与输入故障排查](docs/guide.md#边界与常见问题) · [提交问题](https://github.com/LiuJH12138/ipad-bluetooth-mouse/issues)
-- [全部版本与 SHA-256 校验文件](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases)
+[使用手册](docs/guide.md) · [本机 API](docs/guide.md#本机接口) · [源码构建与测试](docs/guide.md#验证与开发) · [提交问题](https://github.com/LiuJH12138/ipad-bluetooth-mouse/issues)
 
 <details>
-<summary>English quick start · stable 1.5.4</summary>
+<summary>English quick start</summary>
 
-Mirror an iPad on Windows 11 x64 over USB and control it with a Bluetooth mouse and keyboard emulated by the PC. No iPad app is required.
+Use your Windows AI assistant to see and operate an iPad or iPhone. USB carries the live picture to the PC. Bluetooth sends mouse and keyboard input back to the selected device. No companion app is required on iOS or iPadOS.
 
-1. Install the Windows MSI, connect an unlocked iPad with a USB data cable, trust the PC, and select **USB 直连** (USB Direct). First-time setup requires the Apple USB driver and the device capture filter.
-2. For input, select **连接蓝牙** (Connect Bluetooth) and pair the PC in iPad Settings. The PC must support the Bluetooth LE peripheral role. To click directly on the picture, open a still page, select **验证坐标** (Verify coordinates), then **画面操控** (Control on screen).
-3. Use **全屏** for full screen. Press **Esc** to release captured input. A Computer Use agent can work directly in the window. For local scripts, opt in with **允许助手控制** and use the bundled `assistant.js`.
+Install the Windows x64 MSI, connect and unlock the device, then select **一键配置** (guided setup). An assistant with desktop control can use **画面操控** to interact with the window. For an assistant that runs local commands, enable **允许助手控制** and use the bundled `assistant.js` to read the screen, act, and check the result.
 
 </details>
