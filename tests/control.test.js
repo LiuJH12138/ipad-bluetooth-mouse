@@ -3,19 +3,55 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createApp } = require('../server');
 const { BluetoothBridge } = require('../lib/bluetooth');
+const { attachDisplayClient } = require('./helpers/display-client');
 
 async function fixture(t, options = {}) {
-  let clock = 1000;
-  const events = [];
-  const bridge = { active:1, keyboardActive:1, keys:(modifiers,keys)=>{events.push({modifiers,keys});return true;}, snapshot:()=>({state:'connected',active:bridge.active}), release:()=>events.push('release'), report:(...args)=>{ events.push(args); return true; }, connect:async()=>({active:1}), close:async()=>{} };
-  const token='test-token'; const { server,expire }=createApp({bridge,token,now:()=>clock,...options});
+  let clock=1000, serial=0, layout=1, sessionId, activeId, changed;
+  const events=[];
+  const id='0'.repeat(32), peerId='e'.repeat(32);
+  const bridge={active:1,keyboardActive:1,peers:[{id:peerId,keyboard:true,absolute:false}],selectedPeer:null,
+    selectPeer:async function(id){this.selectedPeer=id;return true;},
+    keys:(modifiers,keys)=>{events.push({modifiers,keys});return true;}, snapshot:()=>({state:'connected',active:bridge.active}),
+    release:()=>events.push('release'),report:(...args)=>{events.push(args);return true;},connect:async()=>({active:1}),close:async()=>{}};
+  const fake=options.usb || {};
+  const usb={...fake,devices:fake.devices || (async()=>[{id}]),get busy(){return fake.busy;},
+    stream:async(res,change,chosen)=>{
+      const publish=(target,lost)=>{
+        activeId=target?.id;
+        sessionId=target && require('node:crypto').randomUUID();
+        serial=0; layout=1; changed=publish;
+        change(target && {...target,sessionId},lost);
+      };
+      if(fake.stream) await fake.stream(res,publish,chosen);
+      else {publish({id:chosen || id,multiple:false});res.end();}
+    }};
+  const token='test-token';
+  const {server,expire}=createApp({now:()=>clock,...options,bridge,token,usb});
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  t.after(()=>new Promise(resolve=>server.close(resolve)));
-  const url=`http://127.0.0.1:${server.address().port}`;
-  async function request(route, data, headers={}) {
-    return fetch(url+'/api/'+route,{method:data===undefined?'GET':'POST',headers:{'X-Control-Token':token,'Content-Type':'application/json',...headers},body:data===undefined?undefined:JSON.stringify(data)});
+  t.after(()=>new Promise(resolve=>{server.close(resolve);server.closeAllConnections();}));
+  const url='http://127.0.0.1:'+server.address().port;
+  async function request(route,data,headers={}) {
+    if (data && !headers['X-Assistant-Token'] && ['control/start','assistant/enable','assistant/disable','frame/clear','control/identify-relative','control/confirm-relative'].includes(route))
+      data={sessionId,deviceId:activeId,...data};
+    const response=await fetch(url+'/api/'+route,{method:data===undefined?'GET':'POST',headers:{'X-Control-Token':token,'Content-Type':'application/json',...headers},body:JSON.stringify(data)});
+    if (route==='usb/video' && response.ok && activeId) await progress();
+    return response;
   }
-  return {request,url,token,bridge,events,advance(ms){clock+=ms;expire();}};
+  async function progress(nextLayout=layout) {
+    layout=nextLayout;
+    return request('display/progress',{sessionId,layout,serial:++serial,ageMs:0});
+  }
+  async function startRelative() {
+    await request('usb/video',{deviceId:id});
+    const target={deviceId:id,peerId};
+    const challenge=await (await request('control/identify-relative',target)).json();
+    assert.equal((await request('control/confirm-relative',{...target,confirmation:challenge.confirmation})).status,200);
+    events.length=0;
+  }
+  if (!options.usb) await startRelative();
+  return {request,url,token,bridge,events,progress,startRelative,closeDisplay:()=>changed(null),get sessionId(){return sessionId;},
+    get frameHeaders(){return {'X-USB-Session':sessionId,'X-Serial':String(serial),'X-Layout':String(layout)};},advance(ms){clock+=ms;expire();}};
+
 }
 test('unauthorized and cross-origin requests cannot control the device',async t=>{
   const f=await fixture(t);
@@ -35,6 +71,7 @@ test('setup accepts only console credentials, known actions and an exact target'
     publishAssistant:(_port,token)=>{key=token;}
   });
   assert.deepEqual(await (await f.request('setup')).json(),status);
+  await f.startRelative();
   await f.request('assistant/enable',{});
   const assistant = {'X-Assistant-Token':key};
   for (const [route,body] of [['setup',undefined],['setup/receiver',{}],['setup/apple-service',{}],['setup/driver',{deviceId:id}]]) {
@@ -45,11 +82,47 @@ test('setup accepts only console credentials, known actions and an exact target'
   assert.equal((await f.request('setup/driver',{})).status,400);
   assert.equal((await f.request('setup/driver',{deviceId:id,all:true})).status,400);
   assert.equal((await f.request('setup/driver',{deviceId:'other'})).status,400);
+  f.closeDisplay();
   assert.deepEqual(calls,[]);
   assert.equal((await f.request('setup/receiver',{})).status,200);
   assert.equal((await f.request('setup/apple-service',{})).status,200);
   assert.deepEqual(await (await f.request('setup/driver',{deviceId:id})).json(),{driver:'replug'});
   assert.deepEqual(calls,['receiver','apple',id]);
+});
+
+test('a Windows wall-clock adjustment cannot renew frozen frames or expire a live control session', async t => {
+  t.mock.timers.enable({apis:['Date'],now:2000000000000});
+  const f=await fixture(t,{now:undefined});
+  const {lease}=await (await f.request('control/start',{})).json();
+  assert.ok(lease);
+  t.mock.timers.setTime(Date.now()+3600000);
+  const status=await (await f.request('status')).json();
+  assert.equal(status.displayState,'live');
+  assert.equal(status.controlling,true);
+  await f.request('display/progress',{sessionId:f.sessionId,serial:500,layout:1,ageMs:5000});
+  t.mock.timers.setTime(Date.now()-3600000);
+  assert.equal((await (await f.request('status')).json()).displayState,'stale');
+});
+
+test('a failed USB mode transition carries its recovery code through the normal video endpoint', async t => {
+  const usb={stream:async()=>{throw Object.assign(Error('USB mode transition failed'),{status:503,code:'USB_MODE_UNCHANGED'});}};
+  const f=await fixture(t,{usb});
+  const response=await f.request('usb/video',{deviceId:'b'.repeat(32)});
+  assert.equal(response.status,503);
+  assert.deepEqual(await response.json(),{error:'USB mode transition failed',code:'USB_MODE_UNCHANGED'});
+});
+
+test('USB stop acknowledges only after the owning capture has released and rejects missing identity', async t => {
+  const release = Promise.withResolvers(), stopping = Promise.withResolvers();
+  const f = await fixture(t,{usb:{stopCapture:async id=>{stopping.resolve(id); await release.promise;}}});
+  await f.request('usb/video',{deviceId:'b'.repeat(32)});
+  assert.equal((await f.request('usb/stop',{})).status,409);
+  let acknowledged=false;
+  const stop=f.request('usb/stop',{sessionId:f.sessionId}).then(response=>{acknowledged=true;return response;});
+  assert.equal(await stopping.promise,f.sessionId);
+  assert.equal(acknowledged,false);
+  release.resolve();
+  assert.equal((await stop).status,200);
 });
 
 test('setup and capture cannot race, and cancelled elevation can be retried', async t => {
@@ -108,12 +181,13 @@ test('heartbeat timeout and Bluetooth disconnect release held buttons',async t=>
 });
 test('frames require authentication, expire and can be cleared',async t=>{
   const f=await fixture(t); const bytes=Buffer.from([255,216,1,2,255,217]);
-  const upload=()=>fetch(f.url+'/api/frame',{method:'POST',headers:{'X-Control-Token':f.token,'Content-Type':'image/jpeg'},body:bytes});
+  const upload=()=>fetch(f.url+'/api/frame',{method:'POST',headers:{...f.frameHeaders,'X-Control-Token':f.token,'Content-Type':'image/jpeg'},body:bytes});
   assert.equal((await f.request('frame')).status,404);
   assert.equal((await upload()).status,200); assert.equal((await f.request('frame')).status,200);
   assert.equal((await f.request('frame',undefined,{'X-Control-Token':'wrong'})).status,401);
   f.advance(4001); assert.equal((await f.request('frame')).status,404);
-  await upload(); await f.request('frame/clear',{}); assert.equal((await f.request('frame')).status,404);
+  assert.equal((await upload()).status,409);
+  await f.progress(); await upload(); await f.request('frame/clear',{}); assert.equal((await f.request('frame')).status,404);
 });
 test('movement is coalesced without merging across button transitions',()=>{
   const writes=[]; const bridge=new BluetoothBridge('unused');
@@ -187,7 +261,7 @@ test('assistant credential is scoped to a live, explicitly shared view and exclu
   assert.equal((await agent('connect',{})).status,403);
   assert.equal((await agent('control/start',{})).status,409);
   const upload = async id => fetch(f.url+'/api/frame',{method:'POST',headers:{
-    'X-Control-Token':f.token,'X-Assistant-View':id,'X-View-Mode':'fullscreen','Content-Type':'image/jpeg'
+    ...f.frameHeaders,'X-Control-Token':f.token,'X-Assistant-View':id,'X-View-Mode':'fullscreen','Content-Type':'image/jpeg'
   },body:Buffer.from([255,216,255,217])});
   await upload('different-window');
   assert.equal((await agent('frame')).status,404);
@@ -198,7 +272,7 @@ test('assistant credential is scoped to a live, explicitly shared view and exclu
   assert.equal((await f.request('control/start',{})).status,409);
   assert.equal((await f.request('control/stop',{lease})).status,409);
   assert.equal((await agent('input',{lease,seq:1,kind:'keyboard',modifiers:0,keys:[4]})).status,200);
-  await f.request('assistant/disable',{});
+  await f.request('assistant/disable',{view});
   assert.equal((await agent('status')).status,401);
   assert.equal(key,null);
   assert.equal(f.events.at(-1),'release');
@@ -220,7 +294,7 @@ test('an open sharing window survives frame pauses, gates input, and revokes on 
     headers:{'X-Control-Token':f.token}, body:JSON.stringify({view}), signal:controller.signal});
   assert.equal(presence.status, 200);
   const upload = () => fetch(f.url+'/api/frame', {method:'POST', headers:{
-    'X-Control-Token':f.token, 'X-Assistant-View':view, 'Content-Type':'image/jpeg'
+    ...f.frameHeaders,'X-Control-Token':f.token, 'X-Assistant-View':view, 'Content-Type':'image/jpeg'
   }, body:Buffer.from([255,216,255,217])});
   try {
     await upload();
@@ -228,7 +302,7 @@ test('an open sharing window survives frame pauses, gates input, and revokes on 
     assert.equal((await f.request('status', undefined, headers)).status, 200);
     assert.equal((await f.request('frame', undefined, headers)).status, 404);
     assert.equal((await f.request('control/start', {}, headers)).status, 409);
-    await upload();
+    await f.progress(); await upload();
     assert.equal((await f.request('control/start', {}, headers)).status, 200);
   } finally { controller.abort(); }
   for (let i=0; key && i<30; i++) await new Promise(resolve => setTimeout(resolve,10));
@@ -238,18 +312,20 @@ test('an open sharing window survives frame pauses, gates input, and revokes on 
 
 test('USB source changes revoke old assistant tokens, frame and manual input lease', async t => {
   let key, sourceChanged;
-  const usb = {stream:async (res, changed) => {
+  const usb = {stream:async (res, changed, id) => {
     sourceChanged = changed;
-    changed();
+    changed(id && {id,multiple:false});
     res.end('video');
   }};
   const f = await fixture(t, {usb, publishAssistant: (_, value) => {key=value;}});
+  await f.startRelative();
   await f.request('assistant/enable', {});
   const oldKey = key;
   const {lease} = await (await f.request('control/start', {})).json();
   assert.equal((await f.request('usb/video', {})).status, 200);
   assert.equal((await f.request('status', undefined, {'X-Assistant-Token':oldKey})).status,401);
   assert.equal((await f.request('heartbeat', {lease})).status,409);
+  await f.startRelative();
   const {view} = await (await f.request('assistant/enable', {})).json();
   sourceChanged();
   assert.equal(key, null);
@@ -280,15 +356,46 @@ test('multiple keyboard subscribers invalidate the lease even with one mouse',as
   assert.deepEqual(f.events,['release']);
 });
 
+test('a delayed first key from the previous keyboard subscription is discarded', async t => {
+  const f=await fixture(t);
+  f.bridge.keyboardGeneration=7;
+  const {lease}=await (await f.request('control/start',{})).json();
+  f.bridge.keyboardGeneration=8;
+  const key={lease,seq:1,kind:'keyboard',modifiers:8,keys:[4]};
+  assert.equal((await f.request('input',key)).status,409);
+  assert.deepEqual(f.events,['release']);
+});
+
+test('only the current console can rename its displayed device and see its private label', async t => {
+  const aliases=new Map();
+  let key;
+  const f=await fixture(t,{names:{get:id=>aliases.get(id) || '',set:(id,alias)=>{aliases.set(id,alias);return alias;}},
+    publishAssistant:(_,value)=>{key=value;}});
+  const deviceId='0'.repeat(32);
+  assert.equal((await f.request('device/alias',{deviceId:'9'.repeat(32),alias:'Other'})).status,409);
+  assert.equal((await f.request('device/alias',{deviceId,alias:'Private label'})).status,200);
+  const local=await (await f.request('status')).json();
+  assert.equal(local.deviceAlias,'Private label');
+  assert.equal(local.computerName,require('node:os').hostname());
+  await f.request('assistant/enable',{});
+  const h={'X-Assistant-Token':key};
+  const shared=await (await f.request('status',undefined,h)).json();
+  assert.equal(shared.activeDeviceId,deviceId);
+  assert.equal(shared.deviceAlias,undefined);
+  assert.equal(shared.deviceLabel,undefined);
+  assert.equal(shared.computerName,undefined);
+  assert.equal((await f.request('device/alias',{deviceId,alias:'overwritten'},h)).status,403);
+});
+
 test('rotation retires verified assistant coordinates while preserving the sharing grant', async t => {
   let token;
   const f = await fixture(t, {publishAssistant: (_, value) => {token = value;}});
   const {view} = await (await f.request('assistant/enable', {})).json();
   const agent = (route, data) => f.request(route, data, {'X-Assistant-Token':token});
-  const upload = (layout, verified) => fetch(f.url+'/api/frame', {method:'POST', headers:{
-    'X-Control-Token':f.token, 'X-Assistant-View':view, 'Content-Type':'image/jpeg',
+  const upload = async (layout, verified) => { await f.progress(layout); return fetch(f.url+'/api/frame', {method:'POST', headers:{
+    ...f.frameHeaders,'X-Control-Token':f.token, 'X-Assistant-View':view, 'Content-Type':'image/jpeg',
     'X-Layout':String(layout), 'X-Verified':String(verified), 'X-Width':'400','X-Height':'840'
-  }, body:Buffer.from([255,216,255,217])});
+  }, body:Buffer.from([255,216,255,217])}); };
   assert.equal((await upload(3,true)).status,200);
   const {lease} = await (await agent('control/start', {})).json();
   await f.request('frame/clear', {view,layout:4});
@@ -338,27 +445,56 @@ test('multiple connected devices route only validated USB and BLE pairs and reti
   let assistantKey;
   const f=await fixture(t,{usb,publishAssistant:(_,key)=>{assistantKey=key;}});
   const bridge=f.bridge;
+  let display, visibleId;
+  const owner = new Map([[peerA,phone],[peerB,pad]]);
+  const received = new Map([[peerA,[]],[peerB,[]]]);
+  async function clickAndType(lease,key) {
+    const reports=[
+      {buttons:1,x:0,y:0,wheel:0}, {buttons:0,x:0,y:0,wheel:0},
+      {kind:'keyboard',modifiers:0,keys:[key]}, {kind:'keyboard',modifiers:0,keys:[]}
+    ];
+    for (const [i,report] of reports.entries()) {
+      assert.equal((await f.request('input',{lease,seq:i+1,...report})).status,200);
+    }
+  }
   Object.assign(bridge,{generation:1,peers:[peerA,peerB].map(id=>({id,absolute:true,keyboard:true})),
     absoluteActive:1, selectedPeer:null, async selectPeer(id){this.selectedPeer=id;return true;},
-    async absolute(){return true;}});
-  const pick=id=>f.request('usb/video',{deviceId:id});
+    report(buttons){received.get(this.selectedPeer).push(buttons);return true;},
+    keys(_modifiers,keys){received.get(this.selectedPeer).push(keys);return true;},
+    absolute(...report){return owner.get(this.selectedPeer)===visibleId ? display.absolute(...report) : true;}});
+  const pick=async id=>{
+    await display?.close();
+    await f.request('usb/video',{deviceId:id});
+    visibleId=id;
+    display=await attachDisplayClient(f);
+  };
   const start=(deviceId,peerId)=>f.request('control/start',{probe:true,deviceId,peerId});
   const verify=(lease,deviceId,peerId)=>f.request('control/verify-peer',{lease,deviceId,peerId});
   const status=async()=>(await f.request('status')).json();
   assert.equal((await (await f.request('devices')).json()).devices.length,2);
   await pick(phone);
   assert.equal((await f.request('control/start',{deviceId:phone})).status,409);
+  // A fully subscribed but different peer acknowledges every HID write.
+  // Its cursor never appears on the selected phone.
+  const other=(await (await start(phone,peerB)).json()).lease;
+  assert.ok(other);
+  const mismatch=await verify(other,phone,peerB);
+  assert.equal(mismatch.ok,false);
+  assert.equal((await status()).verifiedPeerId,null);
+  await f.request('control/stop',{lease:other});
   const lease=(await (await start(phone,peerA)).json()).lease;
   assert.ok(lease);
   assert.equal((await f.request('input',{lease,seq:1,kind:'absolute',buttons:1,x:0,y:0})).status,409);
   assert.equal((await f.request('input',{lease,seq:1,kind:'keyboard',modifiers:0,keys:[4]})).status,409);
-  assert.equal((await verify(lease,phone,peerA)).status,409);
-  for (const seq of [1,2,3]) assert.equal((await f.request('input',{lease,seq,kind:'absolute',buttons:0,x:100*seq,y:100})).status,200);
   assert.equal((await verify(lease,phone,peerB)).status,409);
-  assert.equal((await verify(lease,phone,peerA)).status,200);
+  const confirmation=await verify(lease,phone,peerA);
+  assert.equal(confirmation.status,200);
+  assert.ok((await confirmation.json()).maxError<=1);
   await f.request('control/stop',{lease});
   const old=(await (await f.request('control/start',{deviceId:phone})).json()).lease;
   assert.ok(old);
+  await clickAndType(old,4);
+  assert.deepEqual(received.get(peerB),[]);
   await f.request('assistant/enable',{});
   assert.ok(assistantKey);
   await pick(pad);
@@ -367,11 +503,136 @@ test('multiple connected devices route only validated USB and BLE pairs and reti
   assert.equal((await start(pad,peerA)).status,409);
   assert.equal((await start(phone,peerB)).status,409);
   assert.equal((await f.request('control/start',{deviceId:pad})).status,409);
+  const padProbe=(await (await start(pad,peerB)).json()).lease;
+  assert.equal((await verify(padProbe,pad,peerB)).status,200);
+  await f.request('control/stop',{lease:padProbe});
+  const padLease=(await (await f.request('control/start',{deviceId:pad})).json()).lease;
+  await clickAndType(padLease,5);
+  assert.equal((await f.request('input',{lease:old,seq:5,kind:'keyboard',modifiers:0,keys:[6]})).status,409);
+  assert.deepEqual(received.get(peerA),[1,0,[4],[]]);
+  assert.deepEqual(received.get(peerB),[1,0,[5],[]]);
   await pick(phone);
   assert.equal((await status()).verifiedPeerId,peerA);
   change(null,phone); // Unexpected USB loss requires a new association.
   await pick(phone);
   assert.equal((await status()).verifiedPeerId,null);
+  await display.close();
+});
+
+test('stale input needs a visible round trip; a freeze or a scene change cannot authorize a click', async t => {
+  const f=await fixture(t);
+  const display=await attachDisplayClient(f);
+  const reports=[];
+  let changeDuringMove=false;
+  f.bridge.report=(...report)=>{
+    reports.push(report);
+    if (changeDuringMove && report[1]) { display.changeScene(); changeDuringMove=false; }
+    return display.report(...report);
+  };
+  async function keepLeaseWhilePictureAges(lease) {
+    for (let i=0;i<5;i++) {
+      f.advance(900);
+      assert.equal((await f.request('heartbeat',{lease})).status,200);
+    }
+  }
+  try {
+    const first=(await (await f.request('control/start',{})).json()).lease;
+    await keepLeaseWhilePictureAges(first);
+    display.freeze();
+    const click={seq:1,buttons:1,x:0,y:0,wheel:0};
+    assert.equal((await f.request('input',{...click,lease:first})).status,409);
+    assert.ok(reports.length>0);
+    assert.ok(reports.every(([buttons,dx,dy,wheel])=>buttons===0 && dy===0 && wheel===0 && dx!==0));
+    display.freeze(false);
+    reports.length=0;
+    const recovered=await f.request('control/start',{});
+    assert.equal(recovered.status,200);
+    const {lease}=await recovered.json();
+    assert.deepEqual(reports,[[0,24,0,0],[0,-24,0,0]]);
+    await keepLeaseWhilePictureAges(lease);
+    reports.length=0;
+    assert.equal((await f.request('input',{...click,lease})).status,200);
+    assert.deepEqual(reports,[[0,24,0,0],[0,-24,0,0],[1,0,0,0]]);
+    assert.equal((await f.request('input',{lease,seq:2,buttons:0,x:0,y:0,wheel:0})).status,200);
+    await keepLeaseWhilePictureAges(lease);
+    reports.length=0;
+    changeDuringMove=true;
+    assert.equal((await f.request('input',{...click,seq:3,lease})).status,409);
+    assert.ok(reports.every(([buttons])=>buttons===0));
+  } finally { await display.close(); }
+});
+
+test('an in-flight pixel reply from an old USB session cannot establish control on reconnect', async t => {
+  const f=await fixture(t);
+  const captured=Promise.withResolvers(), resume=Promise.withResolvers(), result=Promise.withResolvers();
+  const display=await attachDisplayClient(f,{
+    beforeReply:async sample=>{captured.resolve(sample.id); await resume.promise;},
+    afterReply:status=>result.resolve(status)
+  });
+  try {
+    f.advance(4100);
+    const recovery=f.request('control/start',{});
+    await captured.promise;
+    f.closeDisplay();
+    await f.startRelative();
+    resume.resolve();
+    assert.equal(await result.promise,409);
+    assert.equal((await recovery).status,409);
+    assert.equal((await (await f.request('status')).json()).controlling,false);
+  } finally { resume.resolve(); await display.close(); }
+});
+
+test('interleaved heartbeats, queued input and stops from retired sessions never affect the new recipient', async t => {
+  const f=await fixture(t), retired=[];
+  let seed=0x517cca;
+  function choose(size) {
+    seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+    return seed%size;
+  }
+  for(let round=0;round<20;round++) {
+    const {lease}=await (await f.request('control/start',{})).json();
+    assert.ok(lease);
+    if(retired.length) {
+      const old=retired[choose(retired.length)];
+      const routes=['input','heartbeat','control/stop'];
+      const delayed=Array.from({length:6},(_,i)=>f.request(routes[choose(3)],{
+        lease:old,seq:i+2,kind:'keyboard',modifiers:8,keys:[4]
+      }));
+      const status=await Promise.all(delayed);
+      assert.ok(status.every(response=>response.status===409));
+      assert.equal((await f.request('heartbeat',{lease})).status,200);
+      assert.deepEqual(f.events,[]);
+    }
+    assert.equal((await f.request('input',{lease,seq:1,buttons:0,x:1,y:0,wheel:0})).status,200);
+    retired.push(lease);
+    f.closeDisplay();
+    await f.startRelative();
+  }
+});
+
+test('USB hotplug revokes relative control without a manual inventory refresh', async t => {
+  const deviceId='0'.repeat(32), other='7'.repeat(32);
+  let notify, scans=0, cancelled=false;
+  const usb={
+    devices:async()=>{scans++; return [{id:deviceId}];},
+    watchTopology:cb=>{notify=cb; return ()=>{cancelled=true;};}
+  };
+  const f=await fixture(t,{usb});
+  await f.startRelative();
+  const {lease}=await (await f.request('control/start',{})).json();
+  assert.ok(lease);
+  const initialScans=scans;
+  notify([deviceId,other]);
+  assert.equal((await f.request('heartbeat',{lease})).status,409);
+  assert.equal((await f.request('control/start',{})).status,409);
+  notify([deviceId]);
+  assert.equal((await f.request('control/start',{})).status,409);
+  const status=await (await f.request('status')).json();
+  assert.equal(status.needsPairing,true);
+  assert.equal(status.canIdentifyRelative,true);
+  assert.equal(scans,initialScans);
+  f.closeDisplay();
+  assert.equal(cancelled,true);
 });
 
 test('one USB device and one unrelated Bluetooth subscriber never gain input by counting alone',async t=>{
@@ -413,6 +674,7 @@ test('single relative-only receiver needs a visible movement and explicit per-co
   assert.equal((await confirm(ticket)).status,409);
   ticket=(await (await identify()).json()).confirmation;
   assert.equal((await confirm(ticket)).status,200);
+  await f.progress();
   const lease=(await (await f.request('control/start',{deviceId})).json()).lease;
   assert.ok(lease);
   changed(null);

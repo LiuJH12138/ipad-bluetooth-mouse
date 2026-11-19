@@ -56,6 +56,13 @@ test('capture errors classify only known receiver messages and keep device detai
     assert.doesNotMatch(message,/Private|serial|libusb/);
   }
   assert.doesNotMatch(captureFailure('Private label and serial'),/Private|serial|握手超时/);
+  assert.match(captureFailure('claim QuickTime interface 2: libusb0_result=-5 win32_error=32 detail=private'),/占用/);
+  assert.match(captureFailure('The iPhone rejected the screen-capture request. Unlock it and retry.'),/拒绝.*解锁/);
+  assert.match(captureFailure('Screen capture started but the iPhone sent no video. Unlock it and retry.'),/采集已启动.*没有.*视频/);
+  assert.match(captureFailure('USB configuration helper sent the QuickTime activation request but observed no exact interface transition'),/未进入投屏模式/);
+  assert.match(captureFailure('USB configuration helper observed QuickTime activation removal but the exact interface did not return before timeout'),/重新识别.*超时/);
+  assert.doesNotMatch(captureFailure('no USB media received for 15 seconds'),/已锁屏|已被占用/);
+  assert.match(captureFailure('',true),/45 秒.*未收到视频/);
 });
 
 test('USB discovery cross-checks the receiver with all present mobile parents', async () => {
@@ -106,7 +113,7 @@ test('one decoder configuration applies each access unit orientation including h
   }));
   const play = vm.runInNewContext(source+'\nplayUsbVideo', {
     VideoDecoder:Decoder, EncodedVideoChunk:class {constructor(init) { Object.assign(this,init); }},
-    performance,AbortController, fetch:async()=>new Response(bytes),
+    performance,AbortController,setTimeout,clearTimeout, fetch:async()=>new Response(bytes),
   });
   await play({canvas, signal:ready.signal, onFrame:(_ms,turns)=>{
     frames.push([canvas.width,canvas.height,turns]);
@@ -115,6 +122,109 @@ test('one decoder configuration applies each access unit orientation including h
   assert.equal(configureCount,1);
   assert.deepEqual(frames,[[400,840,0],[400,840,2],[840,400,1]]);
   assert.deepEqual(rotations,[0,Math.PI,Math.PI/2]);
+});
+
+test('a connected USB stream without a decoded first frame reports which stage timed out',async()=>{
+  const vm=require('node:vm'), fs=require('node:fs'), path=require('node:path');
+  const source=fs.readFileSync(path.join(__dirname,'../web/usb-video.js'),'utf8');
+  const cases=[
+    [Buffer.from('MLB1'),/完整.*视频/],
+    [packet(1,[0,0,1,0x41]),/关键帧/],
+    [packet(1,[0,0,1,0x67,0x64,0,0x32,0,0,1,0x65]),/解码/]
+  ];
+  for(const [chunk,expected] of cases) {
+    const ready=new AbortController();
+    let stop;
+    const play=vm.runInNewContext(source+'\nplayUsbVideo',{
+      VideoDecoder:class {reset(){} configure(){} decode(){} close(){}},
+      EncodedVideoChunk:class {}, performance, AbortController, clearTimeout,
+      setTimeout:callback=>setTimeout(callback,10),
+      fetch:async(_url,{signal})=>new Response(new ReadableStream({
+        start(controller) {controller.enqueue(chunk); stop=()=>controller.close(); signal.addEventListener('abort',stop,{once:true});}
+      }))
+    });
+    const safety=setTimeout(()=>ready.abort(),120);
+    try {
+      await assert.rejects(play({canvas:{getContext:()=>({})},signal:ready.signal,onFrame:()=>assert.fail('unexpected frame')}),expected);
+    } finally {clearTimeout(safety);}
+  }
+});
+
+test('only a native activation refusal without an interface transition exposes the retry code', async () => {
+  const {UsbVideo}=require('../lib/usb-video');
+  const {PassThrough}=require('node:stream');
+  const {EventEmitter}=require('node:events');
+  const serial='0000803000abcd1234567890';
+  const reason='USB configuration helper sent the QuickTime activation request but observed no exact interface transition';
+  for(const [native,shouldRetry] of [[reason,true],['USB configuration helper observed QuickTime activation removal but the exact interface did not return before timeout',false]]) {
+    const usb=new UsbVideo({run:async (_exe,args)=>({stdout:args[0]==='--list' ? JSON.stringify([{serial,driver:'ready'}]) : serial}),
+      spawnProcess:()=>{
+        const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stderr:new PassThrough()});
+        setImmediate(()=>{
+          child.stderr.write(native.slice(0,48));
+          child.stderr.write(native.slice(48));
+          if(shouldRetry) child.stderr.write('\n'+'ignored cleanup log '.repeat(120));
+          child.emit('close',1);
+        });
+        return child;
+      }});
+    await assert.rejects(usb.stream(new PassThrough()),error=>{
+      if(shouldRetry) {
+        assert.equal(error.status,503); assert.equal(error.code,'USB_MODE_UNCHANGED');
+        assert.match(error.message,/未进入投屏模式/);
+      } else assert.equal(error.code,undefined);
+      return true;
+    });
+    assert.equal(usb.busy,false);
+  }
+});
+
+test('USB playback retries the same selected device once, only before media, and can be cancelled',async()=>{
+  const vm=require('node:vm'), fs=require('node:fs'), path=require('node:path');
+  const source=fs.readFileSync(path.join(__dirname,'../web/usb-video.js'),'utf8');
+  const id='b'.repeat(32);
+  const refused=()=>Response.json({error:'所选设备未进入投屏模式。',code:'USB_MODE_UNCHANGED'},{status:503});
+  const occupied=()=>Response.json({error:'USB 采集接口被占用。'},{status:409});
+  const media=()=>new Response(packet(1,[0,0,1,0x67,0x64,0,0x32,0,0,1,0x65]),{
+    headers:{'X-Apple-Device-Id':id,'X-USB-Session':'session-2','X-Apple-Device-Family':'iPad'}});
+  class Decoder {
+    constructor({output}) {this.output=output;}
+    reset(){} configure(){} close(){}
+    decode(chunk){this.output({timestamp:chunk.timestamp,displayWidth:100,displayHeight:50,close(){}});}
+  }
+  async function scenario(sequence,{deviceId=id,cancelAtRetry=false,finishAfterFrame=false}={}) {
+    const requests=[], notices=[], frames=[];
+    const abort=new AbortController();
+    const play=vm.runInNewContext(source+'\nplayUsbVideo',{
+      VideoDecoder:Decoder, EncodedVideoChunk:class{constructor(init){Object.assign(this,init);}},
+      performance,AbortController,clearTimeout,setTimeout:(callback,ms)=>setTimeout(callback,ms>10000?ms:1),
+      fetch:async(_url,opts)=>{requests.push(opts.body&&JSON.parse(opts.body).deviceId);return sequence[requests.length-1]();}
+    });
+    const canvas={getContext:()=>({setTransform(){},rotate(){},drawImage(){}})};
+    let error;
+    try {
+      await play({token:'test',deviceId,canvas,signal:abort.signal,onRetry:message=>{
+        notices.push(message);
+        if(cancelAtRetry) abort.abort();
+      },onFrame:(_ms,_turns,_family,session)=>{
+        frames.push(session); if(finishAfterFrame) abort.abort();
+      }});
+    } catch(e) {error=e;}
+    return {requests,notices,frames,error};
+  }
+  const success=await scenario([refused,media],{finishAfterFrame:true});
+  assert.deepEqual(success.requests,[id,id]); assert.equal(success.notices.length,1);
+  assert.deepEqual(success.frames,['session-2']); assert.equal(success.error,undefined);
+  const repeated=await scenario([refused,refused]);
+  assert.deepEqual(repeated.requests,[id,id]); assert.equal(repeated.error.code,'USB_MODE_UNCHANGED');
+  assert.match(repeated.error.message,/未进入投屏模式/);
+  const busy=await scenario([occupied]);
+  assert.deepEqual(busy.requests,[id]); assert.deepEqual(busy.notices,[]);
+  const ambiguous=await scenario([refused],{deviceId:null}); assert.deepEqual(ambiguous.requests,[undefined]);
+  const cancelled=await scenario([refused],{cancelAtRetry:true}); assert.deepEqual(cancelled.requests,[id]);
+  const disconnected=await scenario([media]); assert.deepEqual(disconnected.requests,[id]);
+  assert.deepEqual(disconnected.frames,['session-2']); assert.deepEqual(disconnected.notices,[]);
+  assert.match(disconnected.error.message,/断开/);
 });
 
 test('USB picker targets an exact live device, validates Windows presence and hides serials', async () => {
@@ -129,12 +239,182 @@ test('USB picker targets an exact live device, validates Windows presence and hi
   assert.equal(list.length,2);
   const target = list.find(d=>d.model===phone.model);
   assert.match(target.id,/^[a-f0-9]{32}$/);
-  assert.doesNotMatch(JSON.stringify(list),/00008030|00008120|Private/);
+  assert.doesNotMatch(JSON.stringify(list),/00008030|00008120/);
+  assert.equal(target.name, 'Private phone');
   assert.equal((await usb.target(target.id)).serial,phone.serial);
   await assert.rejects(usb.target(),/选择/);
   devices = [pad];
   await assert.rejects(usb.target(target.id),/设备/);
   assert.equal((await usb.target()).serial,pad.serial);
+});
+
+test('device names survive capture re-enumeration and are cleaned for display', async () => {
+  const {UsbVideo} = require('../lib/usb-video');
+  const serial = '0000803000abcd1234567890';
+  let list = [{serial, driver:'ready', name:'  书房\n的\u202eiPad  ', model:'iPad8,11'}];
+  const usb = new UsbVideo({run:async (_exe, args) => {
+    if (args[0] === '--list') return {stdout:JSON.stringify(list)};
+    if (args[0] === '--driver') return {stdout:'{"present":true,"driver":"ready"}'};
+    return {stdout:serial};
+  }});
+  const [device] = await usb.devices();
+  assert.equal(device.name, '书房 的iPad');
+  list = [];
+  assert.deepEqual(await usb.devices(), [device]);
+});
+
+test('USB topology watcher deduplicates snapshots, fails closed and cancels', async () => {
+  const {UsbVideo} = require('../lib/usb-video');
+  const {EventEmitter} = require('node:events');
+  const {PassThrough} = require('node:stream');
+  const serials = ['0000803000abcd1234567890','000081200011223344556677'];
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  let killed = false;
+  child.kill = () => { killed = true; };
+  const usb = new UsbVideo({spawnProcess:()=>child, run:async (_exe,args) =>
+    ({stdout:args[0] === '--list' ? JSON.stringify(serials.map(serial=>({serial,driver:'ready'}))) : serials.join('\n')})});
+  const ids = (await usb.devices()).map(d=>d.id).sort();
+  const seen = [];
+  const cancel = usb.watchTopology(value => seen.push(value));
+  for (const snapshot of [serials, [...serials].reverse(), [], 'bad', 'bad', [serials[0]]]) {
+    child.stdout.write(JSON.stringify(snapshot) + '\n');
+  }
+  cancel();
+  child.stdout.write('[]\n');
+  child.emit('close', 0);
+  assert.deepEqual(seen, [ids, [], null, [(await usb.devices())[0].id]]);
+  assert.equal(killed, true);
+});
+
+test('each capture gets a distinct session and a stuck helper releases the capture slot after termination', async () => {
+  const {UsbVideo} = require('../lib/usb-video');
+  const {EventEmitter, once} = require('node:events');
+  const {PassThrough} = require('node:stream');
+  const net = require('node:net');
+  const serial = '0000803000abcd1234567890';
+  let forced = 0, stopped = 0;
+  const usb = new UsbVideo({stopGraceMs:10, killWaitMs:15, run:async (_exe,args) =>
+    ({stdout:args[0] === '--list' ? JSON.stringify([{serial,driver:'ready'}]) : serial}),
+    spawnProcess:(_exe,_args,options) => {
+      const child = new EventEmitter();
+      child.stdin = new PassThrough();
+      child.stderr = new PassThrough();
+      child.stdin.on('data', data=>{ if (String(data) === 'stop\n') stopped++; });
+      const socket = net.connect(Number(options.env.MIRRORLAB_MEDIA_PORT), '127.0.0.1', () => socket.write('frame'));
+      child.kill = () => { forced++; socket.destroy(); child.emit('close',1); return true; };
+      return child;
+    }});
+  const sessions = new Set();
+  for (let i = 0; i < 2; i++) {
+    const res = new PassThrough(), headers = new Map(), changes = [];
+    res.setHeader = (key, value) => headers.set(key,value);
+    const firstData = once(res,'data');
+    const stream = usb.stream(res,(source,lost) => changes.push([source,lost]));
+    await firstData;
+    const session = headers.get('X-USB-Session');
+    assert.match(session,/^[a-f0-9-]{36}$/);
+    assert.equal(changes[0][0].sessionId,session);
+    await assert.rejects(usb.stopCapture('a-different-session'),{status:409});
+    assert.equal(usb.busy,true);
+    sessions.add(session);
+    usb.stopCapture();
+    await stream;
+    assert.equal(usb.busy,false);
+    assert.deepEqual(changes[1],[null,null]);
+  }
+  assert.equal(sessions.size,2);
+  assert.equal(forced,2);
+  assert.equal(stopped,2);
+});
+
+test('failed termination rejects further captures and setup until Windows confirms exit', async () => {
+  const {UsbVideo} = require('../lib/usb-video');
+  const {PassThrough} = require('node:stream');
+  const {EventEmitter} = require('node:events');
+  const usb = new UsbVideo({stopGraceMs:5, killWaitMs:5});
+  const child = Object.assign(new EventEmitter(), {
+    pid:1, stdin:new PassThrough(), stderr:new PassThrough(), kill:()=>false
+  });
+  const capture = usb.superviseCapture(child);
+  capture.stop();
+  await assert.rejects(capture.done,/停止超时/);
+  await assert.rejects(usb.stream(new PassThrough()),{status:503});
+  await assert.rejects(usb.setupDevice('0'.repeat(32)),{status:503});
+  await assert.rejects(usb.stopCapture('no-active-session'),{status:503});
+  child.emit('exit', 1);
+  assert.doesNotThrow(()=>usb.checkReceiverReleased());
+});
+
+test('an explicit stop adopts a closing stream and waits for native USB restoration', async () => {
+  const {UsbVideo} = require('../lib/usb-video');
+  const {EventEmitter,once} = require('node:events');
+  const {PassThrough} = require('node:stream');
+  const net = require('node:net');
+  const serial='0000803000abcd1234567890', stopping=Promise.withResolvers();
+  let kills=0, commands=0, session;
+  const usb=new UsbVideo({stopGraceMs:10,restoreGraceMs:200,killWaitMs:5,
+    run:async (_exe,args)=>({stdout:args[0]==='--list' ? JSON.stringify([{serial,driver:'ready'}]) : serial}),
+    spawnProcess:(_exe,_args,opts)=>{
+      const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stderr:new PassThrough()});
+      const socket=net.connect(Number(opts.env.MIRRORLAB_MEDIA_PORT),'127.0.0.1',()=>socket.write('frame'));
+      child.stdin.on('data',()=>{
+        commands++; stopping.resolve();
+        setTimeout(()=>{socket.destroy();child.emit('close',0);},35);
+      });
+      child.kill=()=>{kills++; child.emit('close',1); return true;};
+      return child;
+    }});
+  const res=new PassThrough(); res.setHeader=()=>{};
+  const ready=once(res,'data');
+  const stream=usb.stream(res,source=>{if(source) session=source.sessionId;});
+  await ready;
+  res.destroy();
+  await stopping.promise;
+  await usb.stopCapture(session);
+  await stream;
+  assert.equal(commands,1);
+  assert.equal(kills,0);
+  assert.equal(usb.busy,false);
+  await usb.stopCapture(session); // Repeated cleanup preserves the original disconnect reason.
+});
+
+test('host shutdown shortens an ongoing normal restore deadline without issuing stop twice', async () => {
+  const {UsbVideo} = require('../lib/usb-video');
+  const {PassThrough} = require('node:stream');
+  const {EventEmitter} = require('node:events');
+  const usb=new UsbVideo({stopGraceMs:5,restoreGraceMs:1000,killWaitMs:5});
+  let kills=0,commands=0;
+  const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stderr:new PassThrough(),
+    kill(){kills++;child.emit('close',1);return true;}});
+  child.stdin.on('data',()=>commands++);
+  const managed=usb.superviseCapture(child);
+  usb.activeCapture={sessionId:'one',stop:ms=>{managed.stop(ms);return managed.done;}};
+  const normal=usb.stopCapture('one');
+  const host=usb.stopCapture();
+  let timer;
+  try {
+    assert.equal(await Promise.race([Promise.all([normal,host]).then(()=>true),
+      new Promise(resolve=>{timer=setTimeout(()=>resolve(false),250);})]),true);
+  } finally {clearTimeout(timer);}
+  assert.equal(kills,1);
+  assert.equal(commands,1);
+});
+
+test('a normally exiting receiver can leave an inherited pipe without blocking a switch', async () => {
+  const {UsbVideo} = require('../lib/usb-video');
+  const {PassThrough} = require('node:stream');
+  const {EventEmitter} = require('node:events');
+  const usb = new UsbVideo({stopGraceMs:30, killWaitMs:5});
+  const child = Object.assign(new EventEmitter(), {
+    stdin:new PassThrough(), stderr:new PassThrough(), kill:()=>assert.fail('graceful exit should not be forced')
+  });
+  const capture = usb.superviseCapture(child);
+  capture.stop();
+  child.emit('exit',0);
+  await capture.done;
+  assert.equal(child.stderr.destroyed,true);
+  assert.doesNotThrow(()=>usb.checkReceiverReleased());
 });
 
 test('driver setup resolves only the chosen physical device and rechecks its parent before elevation',async()=>{

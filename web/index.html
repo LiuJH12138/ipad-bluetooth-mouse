@@ -26,16 +26,21 @@
             <button id="connect" class="inline-action" aria-label="连接蓝牙">连接</button>
           </div>
         </div>
+        <p id="pairing-help" class="hint" hidden></p>
         <details class="disclosure">
           <summary>连接详情</summary>
           <div class="detail-content">
-            <p id="pairing-help">首次配对时，在设备的蓝牙设置中选择这台电脑。</p>
             <dl class="metrics">
               <div id="keyboard-row" hidden><dt>键盘</dt><dd id="keyboard-status">未连接</dd></div>
               <div><dt>投屏</dt><dd id="video-status">等待画面</dd></div>
               <div id="verification-row" hidden><dt>定位</dt><dd id="verification-result"></dd></div>
               <div id="input-row" hidden><dt>上次操作</dt><dd id="input-result"></dd></div>
             </dl>
+            <form id="device-alias" hidden>
+              <label for="alias-input">本机别名</label>
+              <div class="alias-fields"><input id="alias-input" maxlength="32" autocomplete="off" placeholder="留空使用设备名称"><button id="save-alias" type="submit">保存</button></div>
+              <p id="alias-result" role="status"></p>
+            </form>
             <button id="stop-usb" hidden>停止投屏</button>
           </div>
         </details>
@@ -45,6 +50,7 @@
         <p id="position-detail" class="hint" aria-live="polite"></p>
         <button id="verify-position">验证坐标</button>
         <button id="confirm-relative" hidden>我已看到指针移动</button>
+        <button id="refresh-pairing" hidden>刷新连接</button>
       </section>
       <details class="panel settings">
         <summary>键鼠设置</summary>
@@ -57,12 +63,12 @@
       <header class="monitor-head">
         <div class="window-title">
           <button id="toggle-inspector" aria-label="收起设备侧栏" title="收起设备侧栏" aria-controls="inspector" aria-expanded="true"><span aria-hidden="true"></span></button>
-          <h2 id="preview-heading">设备屏幕</h2>
+          <div class="target-title"><h2 id="preview-heading"><span id="preview-name">设备屏幕</span><small id="preview-code"></small></h2><small id="target-state" hidden></small></div>
         </div>
         <div class="preview-tools"><span id="active-usb-action"></span><button id="fullscreen" aria-controls="monitor" hidden>全屏</button></div>
       </header>
       <dialog id="device-picker" aria-labelledby="device-picker-title">
-        <h3 id="device-picker-title">选择 USB 设备</h3>
+        <h3 id="device-picker-title" tabindex="-1" autofocus>选择 USB 设备</h3>
         <p id="device-picker-status" role="status"></p>
         <div id="device-list"></div>
         <div class="row-actions">
@@ -72,21 +78,25 @@
       </dialog>
       <div id="stage">
         <canvas id="usb-canvas" tabindex="-1" hidden aria-label="设备 USB 实时画面"></canvas>
+        <div id="fullscreen-target" hidden><span id="fullscreen-name"></span><span id="fullscreen-code"></span><span id="fullscreen-state"></span></div>
         <textarea id="picture-keyboard" tabindex="-1" aria-label="设备画面键盘" autocomplete="off" autocapitalize="off" spellcheck="false" disabled></textarea>
         <div id="placeholder">
           <div class="pairing-art" aria-hidden="true">
             <div class="tablet"><div class="tablet-display"><i></i><b></b><em></em></div></div>
             <div class="usb-cable"></div>
           </div>
-          <h3>连接 iPhone 或 iPad</h3>
-          <p>用数据线连接，并解锁设备。</p>
-          <div class="start-actions">
+          <h3 id="connection-heading">连接 iPhone 或 iPad</h3>
+          <p id="connection-instruction">用 USB 数据线连接并解锁设备。需要键鼠时，选「一键配置」。</p>
+          <p id="opening-progress" role="status" hidden></p>
+          <div id="start-actions" class="start-actions">
             <button id="setup-start" class="primary">一键配置</button>
             <span id="idle-usb-action"><button id="usb">仅投屏</button></span>
           </div>
+          <button id="cancel-opening" hidden>取消连接</button>
         </div>
         <section id="setup-panel" class="setup-panel" aria-labelledby="setup-title" hidden>
           <h3 id="setup-title" tabindex="-1">正在检测</h3>
+          <p id="setup-target" hidden></p>
           <p id="setup-detail" role="status"></p>
           <div id="setup-devices" class="setup-devices"></div>
           <a id="setup-store" href="https://apps.microsoft.com/detail/9np83lwlpz9k" target="_blank" rel="noopener noreferrer" hidden>获取 Apple 设备 ↗</a>

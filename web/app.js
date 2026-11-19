@@ -5,6 +5,7 @@ const token = location.hash.slice(1) || sessionStorage.getItem('control-token');
 if (location.hash) { sessionStorage.setItem('control-token', token); history.replaceState(null, '', '/'); }
 let lease, seq = 0, connected = false, keyboardConnected = false;
 let bluetoothState = 'idle', connecting = false;
+let computerName = '';
 let inputChain = Promise.resolve(), releaseWait = Promise.resolve(), leaseWait = null, controlEpoch = 0;
 let dx = 0, dy = 0, buttons = 0, inputBusy = false, frameBusy = false, frameEpoch = 0;
 let capturedPosition = null;
@@ -25,10 +26,65 @@ const usbCanvas = $('usb-canvas');
 const pictureKeyboard = $('picture-keyboard');
 let usbSession = null, usbLive = false, usbFamily = '';
 let usbDeviceId = null, deviceListing = 0, openingDevice = false;
+let currentDevice = null, relativeBlocked = false, targetDisplayState = '', remoteControlling = false;
+const relativeBlockedHelp = '这台旧式键鼠需要单独核对。请只保留目标设备的 USB 线和它到电脑的蓝牙连接，再点「刷新连接」。';
 let needsPairing = false, availablePeers = [], pairing = false;
+// A remembered candidate can only trigger the same three-point test on a new stream.
+const previousAbsolutePeers = new Map();
+let reconnectCandidate = null;
 let relativePeerId = null, relativeChallenge = null;
 let pointMode = false, aiming = false, usbFrameNumber = 0;
 let absoluteActive = false, absoluteVerified = false, absoluteTried = false, usbTurns = 0;
+let displaySessionId = null, decodedAt = 0, lastProgress = -Infinity;
+let progressPending = null, publishedSerial = 0, reportedSerial = 0;
+function flushDisplayProgress(force = false) {
+  const id=displaySessionId, serial=usbFrameNumber;
+  if (!id || progressPending || serial===reportedSerial || (!force && performance.now()-lastProgress<280)) return;
+  lastProgress=performance.now();
+  const pending=reportProgress(id,pointerLayout,serial,decodedAt);
+  progressPending=pending;
+  pending.then(()=>{if (displaySessionId===id) reportedSerial=serial;},()=>{}).finally(()=>{
+    if (progressPending===pending) progressPending=null;
+  });
+}
+setInterval(flushDisplayProgress,300);
+async function reportProgress(id, layout, serial, capturedAt) {
+  return api('display/progress',{sessionId:id,layout,serial,ageMs:Math.max(0,performance.now()-capturedAt)});
+}
+async function watchDisplay(id, session) {
+  const current = () => displaySessionId===id && usbSession===session && !session.signal.aborted;
+  while (current()) {
+    try {
+      const response=await fetch('/api/display/watch',{method:'POST',signal:session.signal,
+        headers:{'X-Control-Token':token,'Content-Type':'application/json'},body:JSON.stringify({sessionId:id})});
+      if (!response.ok) throw Error('无法连接画面核对。');
+      const reader=response.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer='';
+      while (current()) {
+        const {value,done}=await reader.read();
+        if (done) break;
+        buffer+=value;
+        const lines=buffer.split('\n'); buffer=lines.pop();
+        for (const line of lines) {
+          const request=JSON.parse(line);
+          if (!request.id || request.layout!==pointerLayout || !current()) continue;
+          if (request.after===usbFrameNumber) await waitForUsbFrame(request.after,60);
+          if (!current() || request.layout!==pointerLayout) continue;
+          const {w,h}=pictureGeometry();
+          const canvas=document.createElement('canvas');
+          canvas.width=w; canvas.height=h;
+          const ctx=canvas.getContext('2d',{willReadFrequently:true});
+          ctx.drawImage(usbCanvas,0,0,w,h);
+          await fetch('/api/display/pixels',{method:'POST',signal:session.signal,headers:{
+            'X-Control-Token':token,'X-USB-Session':id,'X-Layout':String(pointerLayout),'X-Sample-Id':request.id,
+            'X-Width':String(w),'X-Height':String(h),'X-Serial':String(usbFrameNumber),'X-Frame-Age':String(performance.now()-decodedAt)},
+            body:ctx.getImageData(0,0,w,h).data});
+        }
+      }
+    } catch { /* A new stream or a restarted service replaces this channel. */ }
+    if (current()) await new Promise(resolve=>setTimeout(resolve,350));
+  }
+}
 let wakePointSample = null;
 let lastPoint = null, heldPointer = null, currentAction = null;
 const pictureQueue = [];
@@ -41,7 +97,7 @@ function resetVerification() {
   if (capturedPosition || (pointMode && (aiming || heldPointer))) stopControl();
   if (assistantView) {
     lastFrameUpload = -Infinity;
-    api('frame/clear', {view:assistantView, layout:pointerLayout}).catch(error => notice(error.message,true));
+    api('frame/clear', {view:assistantView, layout:pointerLayout,sessionId:displaySessionId}).catch(error => notice(error.message,true));
   }
   absoluteVerified = absoluteTried = false;
   verificationDetail = '';
@@ -51,9 +107,10 @@ const pointContext = pointFrame.getContext('2d', {willReadFrequently:true});
 let assistantView = null;
 let assistantChanging = false;
 async function disableAssistant() {
+  const view=assistantView;
   assistantView = null;
   frameEpoch++;
-  await api('assistant/disable', {});
+  await api('assistant/disable', {view,sessionId:displaySessionId});
   update();
 }
 $('assistant').onclick = async () => {
@@ -63,7 +120,10 @@ $('assistant').onclick = async () => {
     if (assistantView) await disableAssistant();
     else {
       await stopControl();
-      const result = await api('assistant/enable', {});
+      const id=displaySessionId;
+      const result = await api('assistant/enable', {sessionId:id});
+      if (!usbLive || id!==displaySessionId) return;
+      publishedSerial=0; lastFrameUpload=-Infinity;
       assistantView = result.view;
       // The open response binds this grant to this page, including while its
       // image encoder or background timers are paused. Unload closes the stream.
@@ -190,10 +250,46 @@ document.addEventListener('fullscreenchange', () => {
 });
 function setUsbFamily(family) {
   usbFamily = family === 'iPhone' || family === 'iPad' ? family : '';
-  $('preview-heading').textContent = usbFamily ? usbFamily + ' 屏幕' : '设备屏幕';
-  usbCanvas.setAttribute('aria-label', (usbFamily || '设备') + ' USB 实时画面');
-  pictureKeyboard.setAttribute('aria-label', usbFamily ? usbFamily + ' 画面键盘' : '设备画面键盘');
 }
+function targetState() {
+  if (targetDisplayState === 'checking') return '正在核对画面';
+  if (targetDisplayState === 'stale') return '等待画面更新 · 输入已暂停';
+  if (pairing) return '正在核对蓝牙';
+  if (!connected) {
+    if (needsPairing && availablePeers.length) return '仅预览 · 蓝牙待核对';
+    return bluetoothRunning() ? '仅预览 · 等待蓝牙' : '仅预览';
+  }
+  if (pointMode || document.pointerLockElement || remoteControlling) return '控制目标已核对 · 正在操控';
+  if (assistantView) return '控制目标已核对 · 助手已获授权';
+  return '控制目标已核对 · 仅预览';
+}
+$('device-alias').onsubmit = async event => {
+  event.preventDefault();
+  const device = currentDevice;
+  if (!usbLive || !device) return;
+  const session = usbSession;
+  $('save-alias').disabled = true;
+  try {
+    const {alias} = await api('device/alias',{deviceId:device.id,alias:$('alias-input').value});
+    if (session !== usbSession) return;
+    statusRevision++;
+    device.alias = alias;
+    $('alias-input').value = alias;
+    $('alias-result').textContent = alias ? '已保存到这台电脑。' : '已恢复设备名称。';
+    update();
+  } catch (error) {
+    if (session === usbSession) $('alias-result').textContent = error.message;
+  } finally { if (session === usbSession) $('save-alias').disabled = false; }
+};
+$('refresh-pairing').onclick = async () => {
+  const session = usbSession;
+  $('refresh-pairing').disabled = true;
+  try {
+    await api('devices');
+    if (session === usbSession) await updateBluetooth();
+  } catch (error) { if (session === usbSession) notice(error.message,true); }
+  finally { $('refresh-pairing').disabled = false; }
+};
 function update() {
   const probing = !!currentAction?.probe;
   const canPair = usbLive && needsPairing && availablePeers.some(peer => peer.absolute && (!peer.boundDeviceId || peer.boundDeviceId === usbDeviceId));
@@ -204,7 +300,7 @@ function update() {
       status = pairing ? '正在识别蓝牙设备' : '待核对蓝牙设备';
       detail = relativePeerId ?
         (relativeChallenge ? '确认当前设备上的指针刚刚向右移动。' : '请先把设备指针放在画面中间，然后移动指针核对键鼠。') :
-        verificationDetail || (canPair ?
+        (relativeBlocked && !canPair ? relativeBlockedHelp : verificationDetail) || (canPair ?
         '在设备上打开静止页面，例如「设置 → 通用」。' :
         '请在这台设备上开启辅助触控，并在蓝牙设置中连接这台电脑。');
     } else if (!connected) { status = '等待蓝牙'; detail = '连接蓝牙后检查设备的指针输入。'; }
@@ -231,7 +327,23 @@ function update() {
   $('point').setAttribute('aria-pressed', String(pictureMode));
   $('control').setAttribute('aria-pressed', String(captureMode));
   $('capture-hint').hidden = !captureMode;
-  $('source-status').textContent = usbLive ? (usbFamily || '已连接') : usbSession ? '正在连接…' : '未连接';
+  const device = usbLive && currentDevice;
+  const label = device ? usbDeviceLabel(device) : '';
+  const stateSummary = label ? targetState() : '';
+  $('source-status').textContent = label || (usbSession ? '正在连接…' : '未连接');
+  $('preview-name').textContent = device ? usbDeviceName(device) : '设备屏幕';
+  $('preview-code').textContent = device ? ' · ' + usbDeviceCode(device) : '';
+  $('preview-heading').title = label;
+  usbCanvas.setAttribute('aria-label', (label || '设备') + ' USB 实时画面');
+  pictureKeyboard.setAttribute('aria-label', label ? label + ' 画面键盘' : '设备画面键盘');
+  $('target-state').textContent = stateSummary;
+  $('target-state').hidden = !label;
+  $('fullscreen-name').textContent = device ? usbDeviceName(device) : '';
+  $('fullscreen-code').textContent = $('preview-code').textContent;
+  $('fullscreen-state').textContent = stateSummary;
+  $('fullscreen-target').hidden = !label;
+  $('device-alias').hidden = !label;
+  $('refresh-pairing').hidden = !relativeBlocked || canPair;
   $('position-panel').hidden = !usbLive || (!connected && !(needsPairing && availablePeers.length));
   $('keyboard-row').hidden = !connected;
   $('verify-position').disabled = !available || aiming || pairing || !!document.pointerLockElement;
@@ -253,18 +365,25 @@ function update() {
   $('connect').disabled = connecting;
   $('connect').textContent = running ? '断开' : '连接';
   $('connect').setAttribute('aria-label', running ? '断开蓝牙' : '连接蓝牙');
-  $('pairing-help').hidden = connected;
+  const waitingPairing = running && !connected && !availablePeers.length;
+  $('pairing-help').hidden = !waitingPairing;
+  if (waitingPairing) $('pairing-help').textContent = '在' + (device ? '所选设备' : '要操控的设备') + '的「设置 → 蓝牙」中选择' + pairingComputer() + '，核对两端的配对码。';
   $('stop-usb').disabled = !usbSession;
   $('stop-usb').hidden = $('stop-usb').disabled;
   const usbAction = $('usb');
   const usbSlot = $(usbLive ? 'active-usb-action' : 'idle-usb-action');
   if (usbAction.parentElement !== usbSlot) usbSlot.append(usbAction);
   usbAction.disabled = openingDevice || (!!usbSession && !usbLive);
+  const opening = !usbLive && !!(usbSession || openingDevice || usbRelease);
+  $('connection-heading').textContent = opening ? (currentDevice ? '正在连接 ' + usbDeviceName(currentDevice) : '正在结束上一次投屏') : '连接 iPhone 或 iPad';
+  $('connection-instruction').hidden = opening;
+  $('opening-progress').hidden = !opening;
+  $('start-actions').hidden = opening;
+  $('cancel-opening').hidden = !usbSession || usbLive;
   $('setup-start').disabled = openingDevice || !!usbSession;
   usbAction.textContent = usbLive ? '切换设备' : usbSession ? '正在连接…' : '仅投屏';
   document.body.classList.toggle('controlling', !!lease);
 }
-async function clearFrame() { frameEpoch++; try { await api('frame/clear', {}); } catch {} }
 async function stopControl(keepPoint = false) {
   if (keepPoint !== true) {
     if (currentAction?.probe) verificationDetail = '验证已取消，可以重新验证。';
@@ -287,7 +406,7 @@ async function ensureLease() {
   leaseWait = (async () => {
     await releaseWait;
     if (epoch !== controlEpoch || !ready()) throw new Error('控制已取消。');
-    const result = await api('control/start', usbDeviceId ? {deviceId:usbDeviceId} : {});
+    const result = await api('control/start', usbDeviceId ? {deviceId:usbDeviceId,sessionId:displaySessionId} : {});
     if (epoch !== controlEpoch || !ready()) {
       await api('control/stop', { lease: result.lease });
       throw new Error('控制已取消。');
@@ -318,35 +437,56 @@ function send(x = 0, y = 0, wheel = 0, b = buttons) {
   });
   return inputChain;
 }
+let usbRelease = null;
 async function stopUsb() {
+  if (usbRelease) return usbRelease;
+  const session = usbSession, id = displaySessionId;
+  statusRevision++;
   pointMode=false;
   resetVerification();
-  if (assistantView) await disableAssistant().catch(() => {});
-  if (usbSession) usbSession.abort();
+  const assistantClosed = assistantView ? disableAssistant().catch(() => {}) : null;
   usbSession = null;
   usbDeviceId = null;
+  currentDevice = null;
+  relativeBlocked = remoteControlling = false;
+  targetDisplayState = '';
+  displaySessionId=null; lastProgress=-Infinity; progressPending=null; publishedSerial=reportedSerial=0;
   needsPairing = false;
+  reconnectCandidate = null;
   relativePeerId = relativeChallenge = null;
   availablePeers = [];
   usbLive = false;
   setUsbFamily('');
   usbCanvas.hidden = true;
   usbCanvas.width = usbCanvas.height = 1;
-  await stopControl();
-  $('placeholder').hidden = false; $('video-dot').classList.remove('on'); $('video-status').textContent = '等待画面';
-  await clearFrame(); update();
+  const controlClosed = stopControl();
+  $('placeholder').hidden = false; $('video-dot').classList.remove('on');
+  $('video-status').textContent = id ? '正在释放上一台设备…' : '等待画面';
+  if (id) $('opening-progress').textContent = '正在释放 USB 连接，请稍候。';
+  frameEpoch++;
+  // Keep the stream open until its owner tells the capture process to restore USB.
+  // Aborting the HTTP reader alone can race the next device's request.
+  const captureClosed = id ? api('usb/stop',{sessionId:id}) : null;
+  if (!id) session?.abort();
+  usbRelease = Promise.all([controlClosed,assistantClosed,captureClosed]);
+  update();
+  try { await usbRelease; }
+  finally {
+    session?.abort();
+    usbRelease = null;
+    $('video-status').textContent = '等待画面';
+    update();
+  }
 }
 const devicePicker = $('device-picker');
 function closeDevicePicker() {
   deviceListing++;
   if (devicePicker.open) devicePicker.close();
 }
-function usbDeviceLabel(device, devices) {
-  const family = ['iPhone','iPad'].includes(device.family) ? device.family : 'Apple 设备';
-  const siblings = devices.filter(other => other.family === device.family);
-  const model = siblings.length > 1 && device.model ? device.model : family;
-  return siblings.filter(other => other.model === device.model).length > 1 ? model + ' · ' + device.id.slice(-6) : model;
-}
+function usbDeviceName(device) { return device.alias || device.name || device.model || device.family || 'Apple 设备'; }
+function usbDeviceCode(device) { return device.id.slice(-8).toUpperCase(); }
+function usbDeviceLabel(device) { return usbDeviceName(device) + ' · ' + usbDeviceCode(device); }
+function pairingComputer() { return computerName ? '电脑「' + computerName + '」' : '这台电脑'; }
 async function chooseUsbDevice(autoConnect) {
   if (openingDevice) return;
   const revision = ++deviceListing;
@@ -358,7 +498,7 @@ async function chooseUsbDevice(autoConnect) {
     const {devices} = await api('devices');
     if (revision !== deviceListing || !devicePicker.open) return;
     if (autoConnect && devices.length === 1 && devices[0].driver === 'ready') {
-      openUsbDevice(devices[0].id);
+      openUsbDevice(devices[0].id, {device:devices[0]});
       return;
     }
     $('device-picker-status').textContent = devices.length ? '' : '没有发现设备。请接好数据线、解锁设备，再刷新。';
@@ -367,11 +507,11 @@ async function chooseUsbDevice(autoConnect) {
       const current = device.id === usbDeviceId;
       const state = current ? '正在投屏' : device.driver === 'ready' ? '' :
         device.driver === 'replug' ? '配置此设备（需重新插线）' : '配置此设备';
-      option.textContent = usbDeviceLabel(device, devices) + (state ? ' · ' + state : '');
+      option.textContent = usbDeviceLabel(device) + (state ? ' · ' + state : '');
       option.disabled = current;
       option.onclick = () => {
-        if (device.driver === 'ready') return openUsbDevice(device.id);
-        const label = usbDeviceLabel(device, devices);
+        if (device.driver === 'ready') return openUsbDevice(device.id, {device});
+        const label = usbDeviceLabel(device);
         closeDevicePicker();
         return startConsoleSetup({deviceId:device.id, label, videoOnly:!usbLive});
       };
@@ -395,30 +535,48 @@ $('usb').onclick = () => chooseUsbDevice(!usbLive);
 $('refresh-devices').onclick = () => chooseUsbDevice(false);
 $('close-devices').onclick = closeDevicePicker;
 devicePicker.addEventListener('cancel', () => { deviceListing++; });
-async function openUsbDevice(deviceId, {signal, onLive} = {}) {
+async function openUsbDevice(deviceId, {signal, onLive, device} = {}) {
   if (openingDevice || !deviceId || signal?.aborted) return;
   openingDevice = true;
   closeDevicePicker();
   update();
   try {
     await stopUsb();
+  } catch (error) {
+    notice(error.message,true);
+    if (onLive) throw error;
+    return;
   } finally {
     openingDevice = false;
+    update();
   }
   if (signal?.aborted) return;
   usbDeviceId = deviceId;
+  reconnectCandidate = onLive ? null : previousAbsolutePeers.get(deviceId);
+  currentDevice = {...device,id:deviceId};
+  $('alias-input').value = currentDevice.alias || '';
+  $('alias-result').textContent = '';
+  $('save-alias').disabled = false;
   needsPairing = true;
   connected = keyboardConnected = absoluteActive = false;
   const session = new AbortController();
   usbSession = session;
+  $('opening-progress').textContent = '等待 USB 画面 · ' + usbDeviceCode(currentDevice);
   const cancelStartup = () => session.abort();
   signal?.addEventListener('abort', cancelStartup, {once:true});
   update();
+  if (!onLive) $('cancel-opening').focus({preventScroll:true});
   $('video-status').textContent = '正在打开 USB 视频…';
   let frames = 0, decodeMs = 0, last = performance.now();
   try {
     let previousSize = '';
-    await playUsbVideo({ token, deviceId, canvas: usbCanvas, signal: session.signal, onFrame(ms, turns = 0, family) {
+    const onRetry = message => {
+      if (usbSession !== session) return;
+      $('video-status').textContent = message;
+      $('opening-progress').textContent = message;
+      if (onLive && !$('setup-panel').hidden) $('setup-detail').textContent = message;
+    };
+    await playUsbVideo({ token, deviceId, canvas: usbCanvas, signal: session.signal, onRetry, onFrame(ms, turns = 0, family, id) {
       if (usbSession !== session) return;
       const size = usbCanvas.width + 'x' + usbCanvas.height;
       if (previousSize !== size || usbTurns !== turns) {
@@ -429,9 +587,16 @@ async function openUsbDevice(deviceId, {signal, onLive} = {}) {
         if (usbLive) update();
       }
       usbFrameNumber++;
+      decodedAt=performance.now();
+      if (id && !displaySessionId) {
+        displaySessionId=id;
+        watchDisplay(id,session);
+      }
+      flushDisplayProgress(!usbLive);
       if (assistantView) publishFrame();
       wakePointSample?.();
       if (!usbLive) {
+        const focusPreview = document.activeElement === $('cancel-opening');
         usbLive = true;
         signal?.removeEventListener('abort', cancelStartup);
         setUsbFamily(family);
@@ -442,6 +607,7 @@ async function openUsbDevice(deviceId, {signal, onLive} = {}) {
         notice('');
         last = performance.now();
         update();
+        if (focusPreview) modeSummary.focus({preventScroll:true});
         onLive?.();
       }
       frames++;
@@ -457,10 +623,18 @@ async function openUsbDevice(deviceId, {signal, onLive} = {}) {
     if (onLive) throw error;
   } finally {
     signal?.removeEventListener('abort', cancelStartup);
-    if (usbSession === session) await stopUsb();
+    if (usbSession === session) {
+      try { await stopUsb(); } catch (error) { notice(error.message,true); }
+    }
   }
 }
-$('stop-usb').onclick = async () => { await stopUsb(); notice(''); };
+$('stop-usb').onclick = async () => {
+  try { await stopUsb(); notice(''); } catch (error) { notice(error.message,true); }
+};
+$('cancel-opening').onclick = async () => {
+  await $('stop-usb').onclick();
+  if (!usbSession) $('usb').focus({preventScroll:true});
+};
 $('connect').onclick = () => changeBluetooth(bluetoothRunning());
 async function changeBluetooth(disconnect, reportFailure = false) {
   if (connecting) return;
@@ -519,17 +693,33 @@ document.addEventListener('pointerlockchange', () => {
   update();
 });
 document.addEventListener('mousemove', e => { if (document.pointerLockElement && lease) { dx += e.movementX * Number($('speed').value); dy += e.movementY * Number($('speed').value); dx=Math.max(-508,Math.min(508,dx)); dy=Math.max(-508,Math.min(508,dy)); } });
+function flushCaptureMotion() {
+  if (capturedPosition) {
+    if (dx || dy) send(dx,dy);
+    dx = dy = 0;
+    return;
+  }
+  // Enqueue motion under the old button state before the next button or wheel report.
+  while (Math.abs(dx) >= 1 || Math.abs(dy) >= 1) {
+    const x = Math.max(-127,Math.min(127,Math.trunc(dx)));
+    const y = Math.max(-127,Math.min(127,Math.trunc(dy)));
+    dx -= x; dy -= y;
+    send(x,y);
+  }
+}
 for (const event of ['mousedown','mouseup']) document.addEventListener(event, e => {
   if (document.pointerLockElement && lease && e.button >= 0 && e.button <= 2) {
-    if (capturedPosition && (dx || dy)) {
-      send(dx,dy);
-      dx=dy=0;
-    }
+    flushCaptureMotion();
     buttons = e.buttons & 7;
     send(0,0,0,buttons);
   }
 });
-document.addEventListener('wheel', e => { if(document.pointerLockElement && lease) { e.preventDefault(); send(0,0,Math.sign(-e.deltaY)*3); } }, { passive: false });
+document.addEventListener('wheel', e => {
+  if (!document.pointerLockElement || !lease) return;
+  e.preventDefault();
+  flushCaptureMotion();
+  if (e.deltaY) send(0,0,Math.sign(-e.deltaY)*3);
+}, { passive: false });
 document.addEventListener('contextmenu', e => { if (document.pointerLockElement) e.preventDefault(); });
 window.addEventListener('blur', stopControl);
 document.addEventListener('visibilitychange', () => { if (document.hidden) stopControl(); });
@@ -540,23 +730,53 @@ setInterval(async () => {
   const x=Math.max(-127,Math.min(127,Math.trunc(dx))),y=Math.max(-127,Math.min(127,Math.trunc(dy)));
   if(!x && !y) return; dx-=x; dy-=y; inputBusy=true; try { await send(x,y); } finally { inputBusy=false; }
 },30);
-setInterval(async () => { if(lease) try { await api('heartbeat',{lease}); } catch(e) { await stopControl(); notice(e.message,true); } },350);
+setInterval(async () => {
+  const owner = lease;
+  if (!owner) return;
+  try { await api('heartbeat',{lease:owner}); }
+  catch (error) {
+    if (lease !== owner) return;
+    await stopControl();
+    notice(error.message,true);
+  }
+},350);
 let statusRevision = 0;
+let keyboardGeneration;
 async function updateBluetooth() {
   const revision = ++statusRevision, deviceId = usbDeviceId;
   try {
     const status=await api('status');
     if (revision !== statusRevision || deviceId !== usbDeviceId) return;
+    if (status.computerName) computerName = status.computerName;
     const ambiguous = status.active > 1 || status.keyboardActive > 1;
     bluetoothState=status.state;
     const matchingSource = !usbLive || usbDeviceId === status.activeDeviceId;
+    if (usbLive && currentDevice && matchingSource) {
+      if (status.deviceLabel && (!currentDevice.name || status.deviceLabel !== currentDevice.family)) currentDevice.name = status.deviceLabel;
+      if (typeof status.deviceAlias === 'string' && currentDevice.alias !== status.deviceAlias) {
+        if (document.activeElement !== $('alias-input') && $('alias-input').value === (currentDevice.alias || '')) $('alias-input').value = status.deviceAlias;
+        currentDevice.alias = status.deviceAlias;
+      }
+    }
+    relativeBlocked = usbLive && matchingSource && !!status.relativeBlocked;
+    targetDisplayState = matchingSource ? status.displayState || '' : '';
+    remoteControlling = matchingSource && !!status.controlling;
     availablePeers = matchingSource ? status.peers || [] : [];
     needsPairing = usbLive && (!matchingSource || !!status.needsPairing);
     relativePeerId = needsPairing && status.canIdentifyRelative && availablePeers.length===1 && !availablePeers[0].absolute ?
       availablePeers[0].id : null;
     if (relativeChallenge && (relativeChallenge.peerId !== relativePeerId || relativeChallenge.expires <= performance.now())) relativeChallenge = null;
     connected=!needsPairing && !ambiguous && status.active===1;
+    const hadKeyboard = keyboardConnected;
     keyboardConnected=connected && status.keyboardActive===1;
+    const keyboardChanged = Number.isSafeInteger(keyboardGeneration) &&
+      Number.isSafeInteger(status.keyboardGeneration) && keyboardGeneration !== status.keyboardGeneration;
+    keyboardGeneration = status.keyboardGeneration;
+    if (hadKeyboard && (!keyboardConnected || keyboardChanged) && (lease || leaseWait || keyboard.pressed.size || aiming)) {
+      await stopControl();
+      if (revision !== statusRevision || deviceId !== usbDeviceId) return;
+      if (connected) notice(keyboardConnected ? '键盘已重新连接，已释放之前按住的键。' : '键盘已断开，已释放按键。键盘重新连接后可继续输入。');
+    }
     absoluteActive = connected && status.absoluteActive === 1;
     if (!absoluteActive && (absoluteTried || absoluteVerified || currentAction?.probe)) {
       resetVerification();
@@ -571,8 +791,23 @@ async function updateBluetooth() {
     if (!status.error && noticeSource === 'bluetooth') notice('');
     lastBluetoothError = status.error || '';
     if (!connected) { pointMode = false; if (lease) await stopControl(); }
+    if (revision !== statusRevision || deviceId !== usbDeviceId) return;
     update();
-  } catch(e) { pointMode=false; connected=false; absoluteActive=false; resetVerification(); await stopControl(); notice('本机服务不可用，请重新运行启动器。',true); }
+    if (usbLive && matchingSource && connected) reconnectCandidate = null;
+    if (reconnectCandidate && usbLive && matchingSource && needsPairing && !status.verifiedPeerId &&
+        !pairing && !remoteControlling && !assistantView && !document.hidden &&
+        availablePeers.some(p=>p.id===reconnectCandidate && p.absolute && !p.boundDeviceId)) {
+      const candidate = reconnectCandidate, session = usbSession;
+      reconnectCandidate = null;
+      await verifyBluetoothDevice(()=>usbSession===session,false,candidate);
+    }
+  } catch(e) {
+    if (revision !== statusRevision || deviceId !== usbDeviceId) return;
+    pointMode = connected = keyboardConnected = absoluteActive = false;
+    resetVerification();
+    await stopControl();
+    if (revision === statusRevision && deviceId === usbDeviceId) notice('本机服务不可用，请重新运行启动器。',true);
+  }
 }
 setInterval(updateBluetooth,1000);
 function frameCanvas() {
@@ -584,17 +819,20 @@ function frameCanvas() {
 }
 let lastFrameUpload = -Infinity;
 async function publishFrame() {
-  if(!assistantView || frameBusy || performance.now() - lastFrameUpload < 490) return;
+  if(!assistantView || frameBusy || !displaySessionId || publishedSerial===usbFrameNumber ||
+      performance.now()-decodedAt>4000 || performance.now() - lastFrameUpload < 490) return;
   const canvas=frameCanvas(); if(!canvas) return; frameBusy=true; const epoch=frameEpoch;
   lastFrameUpload = performance.now();
-  const layout=pointerLayout;
+  const layout=pointerLayout, serial=usbFrameNumber, capturedAt=decodedAt, id=displaySessionId, view=assistantView;
   const verified=absoluteVerified;
   try {
+    await reportProgress(id,layout,serial,capturedAt);
     const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',0.82));
-    if(epoch!==frameEpoch || !assistantView || layout!==pointerLayout) return;
+    if(epoch!==frameEpoch || assistantView!==view || id!==displaySessionId || layout!==pointerLayout) return;
     const response=await fetch('/api/frame',{method:'POST',headers:{'X-Control-Token':token,'Content-Type':'image/jpeg','X-Assistant-View':assistantView || '',
-      'X-Layout':layout,'X-Verified':String(verified),'X-Width':String(canvas.width),'X-Height':String(canvas.height),
+      'X-USB-Session':id,'X-Serial':String(serial),'X-Layout':layout,'X-Verified':String(verified),'X-Width':String(canvas.width),'X-Height':String(canvas.height),
       'X-View-Mode':document.fullscreenElement === monitor ? 'fullscreen' : 'window'},body:blob});
+    if(response.ok && id===displaySessionId && view===assistantView) publishedSerial=serial;
     if(!response.ok && epoch===frameEpoch && assistantView && layout===pointerLayout)
       throw new Error('本机画面更新失败');
   } catch(e) { notice(e.message,true); } finally { frameBusy=false; }
@@ -777,10 +1015,10 @@ async function identifyRelative(confirm, isCurrent = () => true) {
   try {
     if (confirm) {
       if (!challenge || challenge.expires <= performance.now() || challenge.peerId !== peerId) return;
-      await api('control/confirm-relative',{deviceId,peerId,confirmation:challenge.confirmation});
+      await api('control/confirm-relative',{deviceId,peerId,sessionId:displaySessionId,confirmation:challenge.confirmation});
       await updateBluetooth();
     } else {
-      const {confirmation} = await api('control/identify-relative',{deviceId,peerId});
+      const {confirmation} = await api('control/identify-relative',{deviceId,peerId,sessionId:displaySessionId});
       if (isCurrent() && usbLive && needsPairing && deviceId === usbDeviceId && layout === pointerLayout && relativePeerId === peerId) {
         relativeChallenge = {peerId, confirmation, expires:performance.now()+60000};
       }
@@ -793,10 +1031,11 @@ async function identifyRelative(confirm, isCurrent = () => true) {
   }
 }
 
-async function verifyBluetoothDevice(isCurrent = () => true, recheckBound = false) {
+async function verifyBluetoothDevice(isCurrent = () => true, recheckBound = false, candidateId = null) {
   if (pairing || !usbLive || (!needsPairing && !recheckBound) || document.pointerLockElement) return;
-  const deviceId = usbDeviceId, layout = pointerLayout, geometry = pictureGeometry();
-  const candidates = availablePeers.filter(peer => peer.absolute && (peer.boundDeviceId === deviceId || (needsPairing && !peer.boundDeviceId)));
+  const deviceId = usbDeviceId, layout = pointerLayout;
+  const candidates = availablePeers.filter(peer => peer.absolute && (!candidateId || peer.id===candidateId) &&
+    (peer.boundDeviceId === deviceId || (needsPairing && !peer.boundDeviceId)));
   if (!candidates.length) return;
   pairing = true;
   await stopControl();
@@ -810,21 +1049,17 @@ async function verifyBluetoothDevice(isCurrent = () => true, recheckBound = fals
       validate();
       verificationDetail = '正在核对第 ' + (index+1) + ' 个蓝牙连接，仅移动指针。请保持画面静止。';
       update();
-      let probeLease, seq = 0;
+      let probeLease;
       try {
-        const result = await api('control/start', {probe:true,peerId:peer.id,deviceId});
+        const result = await api('control/start', {probe:true,peerId:peer.id,deviceId,sessionId:displaySessionId});
         probeLease = result.lease;
         validate();
-        const checked = await verifyAbsolutePointer({
-          width:geometry.w, height:geometry.h, sample:pointSampler(geometry,validate), validate,
-          send:(x,y) => { validate(); return api('input',{lease:probeLease,seq:++seq,kind:'absolute',buttons:0,x,y,settle:true}); }
-        });
-        validate();
-        await api('control/verify-peer',{lease:probeLease,peerId:peer.id,deviceId});
+        const checked=await api('control/verify-peer',{lease:probeLease,peerId:peer.id,deviceId});
         validate();
         await updateBluetooth();
         validate();
         if (needsPairing || !connected) throw Error('蓝牙设备已改变，请重新核对。');
+        previousAbsolutePeers.set(deviceId,peer.id);
         absoluteTried = absoluteVerified = true;
         verificationDetail = '已识别当前设备 · 三点最大偏差 ' + checked.maxError.toFixed(1) + ' 个采样像素。';
         notice(verificationDetail);
@@ -838,7 +1073,8 @@ async function verifyBluetoothDevice(isCurrent = () => true, recheckBound = fals
     }
   } catch (error) {
     if (isCurrent() && deviceId === usbDeviceId && layout === pointerLayout) {
-      verificationDetail = error.message + ' 请确认设备已开启辅助触控并停在静止页面，再重新核对。';
+      const target = currentDevice ? usbDeviceLabel(currentDevice) : '当前投屏设备';
+      verificationDetail = error.message + ' 请在「' + target + '」的蓝牙设置中确认电脑显示“已连接”，开启辅助触控，停在静止页面后再核对。';
       notice(verificationDetail,true);
     }
   } finally {

@@ -4,7 +4,11 @@ let setupRun = null;
 const setupPanel = $('setup-panel');
 function showSetup(title, detail, {next, store = false} = {}) {
   $('setup-title').textContent = title;
-  $('setup-detail').textContent = detail;
+  if ($('setup-detail').textContent !== detail) $('setup-detail').textContent = detail;
+  if (detail && $('notice').textContent === detail) notice('');
+  const device = setupRun?.device;
+  $('setup-target').hidden = !device;
+  $('setup-target').textContent = device ? '所选设备：' + usbDeviceLabel(device) : '';
   $('setup-store').hidden = !store;
   $('setup-devices').replaceChildren();
   $('setup-next').hidden = !next;
@@ -47,7 +51,7 @@ function awaitSetupAction(run, choices) {
     $('setup-next').onclick = event => { if (!(event?.detail > 1)) done(null); };
     for (const device of choices || []) {
       const button = document.createElement('button');
-      button.textContent = usbDeviceLabel(device, choices);
+      button.textContent = usbDeviceLabel(device);
       button.onclick = () => done(device.id);
       $('setup-devices').append(button);
     }
@@ -92,7 +96,7 @@ async function prepareSetup(run) {
   showSetup('检测 Windows 和 USB', '请用数据线连接设备并解锁。需要 Windows 权限时，系统会弹出确认窗口。');
   const settings = await api('setup', undefined, {signal:run.signal});
   checkSetup(run);
-  run.computerName = settings.computerName;
+  if (settings.computerName) computerName = settings.computerName;
   run.appleSupportUncertain = ['missing','unknown'].includes(settings.appleService);
   if (!settings.receiverReady) {
     if (!settings.sourceInstallable) throw Error('当前缺少 USB 采集组件，请使用包含 USB 组件的 MSI 安装包修复控制台。');
@@ -137,6 +141,7 @@ async function prepareSetup(run) {
       await setupPause(run, 2000);
       continue;
     }
+    run.device = device;
     if (device.driver === 'ready') return true;
     if (device.driver !== 'missing') throw Error('暂时无法确认所选设备的 USB 驱动。请重新插线并解锁后重试。');
     showSetup('配置所选设备的 USB 驱动', '如果 Windows 请求管理员权限，请确认。设备可能需要重新插线。');
@@ -152,7 +157,7 @@ async function connectSetupScreen(run) {
   checkSetup(run);
   showSetup('等待 USB 实时画面', '请保持设备解锁，并在设备上确认可能出现的信任提示。');
   await new Promise((resolve, reject) => {
-    openUsbDevice(run.deviceId, {signal:run.signal, onLive:resolve})
+    openUsbDevice(run.deviceId, {signal:run.signal, onLive:resolve, device:run.device})
       .then(() => reject(Error('没有收到所选设备的实时画面，请检查连接并重试。')), reject);
   });
   checkSetup(run);
@@ -194,11 +199,18 @@ async function setupKeyboard(run) {
       if (!absoluteVerified) throw Error(verificationDetail || '三个指针落点未能全部确认。请打开静止页面后重试。');
     }
     if (connected && keyboardConnected && (absoluteVerified || !absoluteActive)) return;
-    const name = run.computerName ? '「' + run.computerName + '」' : '这台电脑';
+    if (relativeBlocked && !candidates) {
+      showSetup('旧式键鼠需要单独核对', relativeBlockedHelp, {next:'刷新连接'});
+      await awaitSetupAction(run);
+      checkSetupScreen(run);
+      await api('devices', undefined, {signal:run.signal});
+      await updateBluetooth();
+      continue;
+    }
     const waitingKeyboard = connected && !keyboardConnected;
     showSetup(waitingKeyboard ? '等待键盘连接' : '等待设备蓝牙配对', waitingKeyboard ?
       '已连接指针，请检查设备的蓝牙键盘连接。两项都就绪后会自动进入画面操控。' :
-      '在设备上开启「设置 → 辅助功能 → 触控 → 辅助触控」，再到蓝牙设置选择' + name + '，核对两端配对码。连接后会自动继续。');
+      '在所选设备上开启「设置 → 辅助功能 → 触控 → 辅助触控」。然后在「设置 → 蓝牙」中选择' + pairingComputer() + '，核对两端的配对码。');
     await setupPause(run, 1000);
   }
 }

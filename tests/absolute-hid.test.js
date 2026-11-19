@@ -61,14 +61,41 @@ test('an absolute send error drops queued inputs and attempts release without re
 
 test('absolute API uses the existing lease, validates coordinates, and waits for native delivery', async t => {
   const {bridge, reply} = await openBridge(t);
-  const {server} = createApp({bridge, token:'local-test'});
+  const deviceId='1'.repeat(32),peerId='2'.repeat(32),sessionId='test-stream';
+  const usb={stream:async(res,change)=>{change({id:deviceId,sessionId,multiple:false});res.end();}};
+  const {server} = createApp({bridge,usb,token:'local-test'});
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
-  t.after(() => new Promise(resolve => server.close(resolve)));
+  t.after(() => new Promise(resolve => {server.close(resolve);server.closeAllConnections();}));
   function post(route, data) {
     return fetch('http://127.0.0.1:' + server.address().port + '/api/' + route, {method:'POST',
       headers:{'X-Control-Token':'local-test','Content-Type':'application/json'}, body:JSON.stringify(data)});
   }
-  const {lease} = await (await post('control/start',{})).json();
+  assert.equal((await post('control/start',{})).status,409);
+  const url='http://127.0.0.1:'+server.address().port;
+  await post('usb/video',{deviceId});
+  await post('display/progress',{sessionId,serial:1,layout:1,ageMs:0});
+  const {attachDisplayClient}=require('./helpers/display-client');
+  const client=await attachDisplayClient({url,token:'local-test',sessionId});
+  t.after(()=>client.close());
+  const targets=selectedPeer=>'TARGETS: '+JSON.stringify({peers:[{id:peerId,absolute:true,keyboard:true}],selectedPeer,keyboardActive:1,absoluteActive:1});
+  reply(targets(null));
+  let auto=true;
+  bridge.child.stdin.write=line=>{
+    const [cmd,...args]=line.trim().split(' ');
+    if(cmd==='peer-select') queueMicrotask(()=>reply(targets(peerId)));
+    if(cmd==='absolute' && auto) {
+      client.absolute(...args.map(Number));
+      queueMicrotask(()=>reply('OK: absolute'));
+    }
+    if(cmd==='status') queueMicrotask(()=>reply(targets(peerId)));
+    if(cmd==='peer-release') queueMicrotask(()=>reply('OK: peer-release'));
+  };
+  const probe=await (await post('control/start',{deviceId,sessionId,peerId,probe:true})).json();
+  assert.ok(probe.lease);
+  assert.equal((await post('control/verify-peer',{lease:probe.lease,deviceId,peerId})).status,200);
+  await post('control/stop',{lease:probe.lease});
+  const {lease} = await (await post('control/start',{deviceId,sessionId})).json();
+  auto=false;
   const event = {lease, seq:1, kind:'absolute', buttons:1, x:0, y:32767};
   for (const bad of [{buttons:8}, {x:-1}, {y:32768}, {x:1.25}]) {
     assert.equal((await post('input', {...event,...bad})).status, 400);

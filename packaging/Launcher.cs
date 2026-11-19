@@ -10,8 +10,8 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("iPhone / iPad 控制台")]
 [assembly: AssemblyProduct("iPad Control Console")]
-[assembly: AssemblyVersion("1.5.92.0")]
-[assembly: AssemblyInformationalVersion("1.6.0-preview.3")]
+[assembly: AssemblyVersion("1.5.94.0")]
+[assembly: AssemblyInformationalVersion("1.6.0-preview.5")]
 
 internal static class Launcher
 {
@@ -63,7 +63,7 @@ internal static class Launcher
             } finally {
                 if (!service.HasExited) {
                     service.StandardInput.Close();
-                    if (!service.WaitForExit(12000)) service.Kill();
+                    if (!service.WaitForExit(16000)) service.Kill();
                 }
             }
         }

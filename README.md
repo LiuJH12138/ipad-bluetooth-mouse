@@ -1,18 +1,18 @@
 # iPad 控制台 · iPad Control Console
 
-在 Windows 上看 iPad 的实时画面，用电脑的鼠标点按、拖动，用键盘在 iPad 上打字。画面通过 USB 传到电脑，键鼠通过蓝牙连接 iPad。iPad 端无需安装 App。
+在 Windows 上通过 USB 实时查看 iPhone 或 iPad 的屏幕，用电脑的鼠标点按、拖动，用键盘打字。键鼠通过蓝牙连接，移动设备上无需安装 App。
 
-**[下载 Windows x64 安装包（1.5.4）](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi)**　·　[使用手册](docs/guide.md)
+**[下载多设备预览版 1.6.0-preview.5（Windows x64）](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.6.0-preview.5/iPad-Control-Console-1.6.0-preview.5-win-x64.msi)**　·　[下载稳定版 1.5.4](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi)　·　[使用手册](docs/guide.md)
 
-**预览版首次使用**　安装 1.6.0-preview.3 后，用数据线连接并解锁设备，点首页的 **一键配置**。控制台会检查电脑组件、准备所选设备的 USB 驱动，接着开始投屏、连接蓝牙并核对指针。两台设备同时接线时，选择要配置的那台。只想看屏幕可以点 **仅投屏**。[首次配置与故障恢复](docs/guide.md#首次配置)
+## 界面展示
 
-## 真机演示
+**连接设备。** 用数据线连接并解锁设备，点 **一键配置** 开始投屏和键鼠设置。只想看屏幕时，点 **仅投屏**。[首次配置与故障恢复](docs/guide.md#首次配置)
 
-点击下方播放 26 秒实录。点播放器的扬声器图标即可听普通话解说，全程附中文字幕。
+![控制台首页。左侧分别显示 USB 投屏和蓝牙键鼠状态，中央提供「一键配置」和「仅投屏」。](docs/media/console-home.png)
 
-https://github.com/user-attachments/assets/5f1bf887-d7e8-4cda-b56b-40dcded73699
+**确认正在控制哪台设备。** 配对向导同时列出所选移动设备和要连接的电脑名称。多台设备可以保持连接，点 **切换设备** 选择当前目标。窗口标题和全屏提示都会显示设备名与八位短码，也可在 **连接详情** 保存本机别名。[多设备操作](docs/guide.md#同时接着-iphone-和-ipad) · [双机实测记录](docs/validation.md)
 
-这段演示录自 USB 直连的 iPad。电脑鼠标点开 GitHub 搜索框，电脑键盘经蓝牙输入 <code>vscode</code>。iPad 显示对应的搜索建议后，控制台切换到全屏。片中剪去了等待时间，输入片段局部放大。[更多真机验证记录](docs/validation.md)
+![预览版配对界面。示例设备「工作室的演示 iPad」处于仅预览状态，向导提示在设备上选择电脑 STUDIO-PC。](docs/media/console-pairing.png)
 
 ## 快速开始（稳定版 1.5.4）
 
@@ -21,8 +21,6 @@ https://github.com/user-attachments/assets/5f1bf887-d7e8-4cda-b56b-40dcded73699
 1. **安装并打开控制台。** 双击 MSI，按中文向导完成安装。旧版用户可先从托盘菜单选择「退出应用」再升级。
 2. **先接画面。** 用数据线连接 iPad，在 iPad 上确认信任电脑，然后点「USB 直连」。出现实时画面后就能点右上角「全屏」。只想看屏幕，到这里即可。首次配置的电脑需要 Apple USB 驱动和设备过滤驱动。[USB 配置说明](docs/guide.md#usb-配置)
 3. **再接键鼠。** 点「连接蓝牙」，在 iPad 的蓝牙设置里选择这台电脑并确认配对。要用 Windows 箭头直接点画面，可在 iPad 打开背景简单的静止页面，点控制台的「验证坐标」，看到「绝对坐标直达」后选「画面操控」。
-
-![控制台启动页，中央是 USB 直连按钮，左侧可以连接蓝牙或展开键鼠设置。](docs/media/startup.png)
 
 ## 选择操作方式
 
@@ -37,7 +35,7 @@ https://github.com/user-attachments/assets/5f1bf887-d7e8-4cda-b56b-40dcded73699
 
 ## 隐私与授权
 
-日常投屏时，视频在电脑本机解码。开启「允许助手控制」后，本机服务只在内存中保留最近一帧供已授权工具读取，画面超过 4 秒未更新就暂停读图和输入。把画面交给外部 AI 后，后续处理取决于该服务。演示只收录控制台与 iPad 上的 GitHub 公开搜索界面，已遮挡账户图标和状态栏。普通话旁白使用 MeloTTS 在本机合成。[助手接口与授权说明](docs/guide.md#助手如何读取画面)
+日常投屏时，画面在电脑本机解码。开启「允许助手控制」后，本机服务只在内存中保留最近一帧供已授权工具读取。超过 4 秒没有新的 USB 解码帧，助手读图会暂停。下一次操作会先用无按键的指针移动核对画面，确认画面恢复且目标一致才继续。把画面交给外部 AI 后，后续处理取决于该服务。[助手接口与授权说明](docs/guide.md#助手如何读取画面)
 
 ## 开发与支持
 

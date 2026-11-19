@@ -25,7 +25,8 @@ async function run([command, ...args]) {
     } catch { /* Closed or expired session. */ }
   }
   if (sessions.length !== 1) throw Error('请在一个正在投屏的控制台窗口中点「允许助手控制」。');
-  const {request,status} = sessions[0];
+  const {request} = sessions[0];
+  let {status} = sessions[0];
   if (command === 'status') { console.log(JSON.stringify(status)); return; }
   if (command === 'frame' && args.length === 1) {
     const data = await (await request('frame')).arrayBuffer();
@@ -64,6 +65,7 @@ async function run([command, ...args]) {
   } else throw Error('用法：status | frame <jpeg> | move <dx> <dy> | click [X Y] | scroll <n> | key <物理键位...> | type <英文字母、空格或数字>');
   const {lease} = await (await request('control/start',{})).json();
   try {
+    status=await (await request('status')).json();
     let seq = 0;
     const layout = command === 'click' ? status.picture?.layout : undefined;
     const send = report => request('input',{lease,layout,seq:++seq,...report});

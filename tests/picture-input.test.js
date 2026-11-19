@@ -35,7 +35,7 @@ async function waitFor(condition) {
 
 // Exercise app.js from USB start and the status poll through the actual DOM
 // event listeners. Replace only hardware, image recognition, and browser I/O.
-async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, absolute = false, probeError, family, status = {}, devices = [{id:"test-phone", family:"iPhone", driver:"ready"}], autoStart = true} = {}) {
+async function openConsole({clock=performance, encodeJpeg, setupApi, frameGate, alignmentGate, heldMoveGate, absolute = false, probeError, family, status = {}, devices = [{id:"test-phone", family:"iPhone", driver:"ready"}], autoStart = true} = {}) {
   const controls = new Map();
   function element(id) {
     if (!controls.has(id)) {
@@ -46,7 +46,11 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
     return controls.get(id);
   }
   const document = Object.assign(new EventTarget(), {
-    body: new Control(), getElementById: element, createElement: () => new Control(), hasFocus: () => true
+    body: new Control(), getElementById: element, createElement: tag => {
+      const control=new Control();
+      if(tag==='canvas' && encodeJpeg) control.toBlob=encodeJpeg;
+      return control;
+    }, hasFocus: () => true
   });
   const window = new EventTarget();
   window.requestAnimationFrame = callback => setTimeout(callback, 0);
@@ -54,6 +58,10 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
   const timers = new Map();
   const output = {targets: [], heldTargets: [], reports: [], stops: 0, physicalButtons: 0, lease: null};
   async function fetch(url, options) {
+    if (url==='/api/frame') {
+      (output.uploads ||= []).push(options.headers);
+      return {ok:true};
+    }
     const data = options.body && JSON.parse(options.body);
     let result = {};
     if (setupApi) {
@@ -62,6 +70,8 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
       if (setupResult !== undefined) return {ok:true, json:async () => setupResult};
     }
     switch (url) {
+      case '/api/display/watch': return new Promise(()=>{});
+      case '/api/display/progress': output.progress=data; break;
       case '/api/connect':
         (output.bluetoothActions ||= []).push('connect');
         Object.assign(status,{state:'waiting',active:0,keyboardActive:0});
@@ -71,6 +81,7 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
         (output.bluetoothActions ||= []).push('disconnect');
         Object.assign(status,{state:'idle',active:0,keyboardActive:0});
         break;
+      case '/api/usb/stop': break;
       case '/api/devices': result = {devices}; break;
       case '/api/assistant/disable': output.revoked = true; break;
       case '/api/status': result = {activeDeviceId:output.device, active: 1, keyboardActive: 1, absoluteActive: Number(absolute), state: 'connected', ...status}; break;
@@ -88,7 +99,10 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
         break;
       case '/api/control/verify-peer':
         assert.equal(output.lease, data.lease);
-        status.needsPairing = false;
+        if (typeof probeError==='function') probeError(output.starts.at(-1));
+        else if (probeError) throw Error(probeError);
+        status.needsPairing=false;
+        result={maxError:1};
         output.bound = {...data};
         break;
       case '/api/control/start':
@@ -113,7 +127,7 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
   }
   vm.runInNewContext(app, {
     window, document, location: {search: '', hash: ''}, sessionStorage: {getItem() {}},
-    performance, setTimeout: (callback, ms) => setTimeout(callback, setupApi && [1000,1800,2000].includes(ms) ? 10 : ms), clearTimeout, setInterval: (callback, ms) => timers.set(ms, callback),
+    performance:clock, setTimeout: (callback, ms) => setTimeout(callback, setupApi && [1000,1800,2000].includes(ms) ? 10 : ms), clearTimeout, setInterval: (callback, ms) => timers.set(ms, callback),
     URLSearchParams, AbortController, fetch, IpadKeyboard, PictureMouseGesture, picturePoint,
     absoluteCoordinates: require('../web/absolute-pointer').absoluteCoordinates,
     async verifyAbsolutePointer({send,validate}) {
@@ -125,10 +139,11 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
       else if (probeError) throw Error(probeError);
       return {maxError:1};
     },
-    playUsbVideo({deviceId, canvas, onFrame, signal}) {
+    playUsbVideo({deviceId, canvas, onFrame, onRetry, signal}) {
       output.device = deviceId;
+      output.retryUsb = onRetry;
       canvas.width = 840; canvas.height = 630;
-      output.rotate = turns => onFrame(1, turns, family);
+      output.rotate = turns => onFrame(1, turns, family, 'stream-'+deviceId);
       if (frameGate) frameGate.then(() => { if (!signal.aborted) output.rotate(0); });
       else output.rotate(0);
       return new Promise(resolve => signal.addEventListener('abort', resolve, {once: true}));
@@ -174,8 +189,23 @@ async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, ab
     document.dispatchEvent(event);
     return event;
   }
-  return {window, screen, output, emit, element, key, document, pollStatus: timers.get(1000)};
+  return {window, screen, output, emit, element, key, document, pollStatus: timers.get(1000), heartbeat: timers.get(350),publish:timers.get(500)};
 }
+
+test('a frozen canvas publishes once until its decoder delivers another frame',async()=>{
+  let time=100, encodes=0;
+  const {output,element,publish}=await openConsole({clock:{now:()=>time},encodeJpeg:done=>{encodes++; done(new Uint8Array([255,216,255,217]));}});
+  await element('assistant').onclick();
+  await publish();
+  for(let i=0;i<12;i++){time+=500;await publish();}
+  assert.equal(encodes,1);
+  assert.equal(output.uploads.length,1);
+  const original=output.uploads[0];
+  output.rotate(0);
+  await waitFor(()=>output.uploads.length===2);
+  assert.equal(original['X-USB-Session'],output.uploads[1]['X-USB-Session']);
+  assert.equal(Number(output.uploads[1]['X-Serial']),Number(original['X-Serial'])+1);
+});
 
 test('picture pointer events forward drag coordinates with the button held', async () => {
   const {screen, output, emit} = await openConsole();
@@ -436,6 +466,112 @@ test('capture keeps relative mouse reports on unverified devices', async () => {
   assert.deepEqual(output.reports.map(r=>[r.kind,r.buttons]), [[undefined,1],[undefined,0]]);
 });
 
+test('relative capture completes motion before pressing, scrolling and releasing', async () => {
+  const {document, element, output} = await openConsole();
+  await element('control').onclick();
+  const mouse = (type, fields) => document.dispatchEvent(Object.assign(new Event(type), fields));
+  mouse('mousemove', {movementX:160, movementY:0});
+  mouse('mousedown', {button:0, buttons:1});
+  mouse('mousemove', {movementX:0, movementY:15});
+  mouse('wheel', {deltaY:100});
+  mouse('mousemove', {movementX:-22, movementY:0});
+  mouse('mouseup', {button:0, buttons:0});
+  await new Promise(setImmediate);
+  assert.deepEqual(output.reports.map(r=>[r.buttons, r.x, r.y, r.wheel]), [
+    [0,127,0,0], [0,33,0,0], [1,0,0,0], [1,0,15,0], [1,0,0,-3], [1,-22,0,0], [0,0,0,0]
+  ]);
+});
+
+test('delayed heartbeat error from a released lease leaves its successor active', async () => {
+  const pending = Promise.withResolvers();
+  const {element, output, heartbeat} = await openConsole({setupApi: url => url === '/api/heartbeat' ? pending.promise : undefined});
+  await element('control').onclick();
+  const beat = heartbeat();
+  await element('preview-mode').onclick();
+  await element('control').onclick();
+  const current = output.lease;
+  pending.reject(Error('old lease'));
+  await beat;
+  assert.equal(output.lease, current);
+  assert.notEqual(element('notice').textContent, 'old lease');
+});
+
+test('stale status error arriving after a newer successful poll preserves current control', async () => {
+  let deferred;
+  const {element, output, pollStatus} = await openConsole({setupApi: url => url === '/api/status' ? deferred?.promise : undefined});
+  await element('control').onclick();
+  const current = output.lease;
+  const oldResponse = deferred = Promise.withResolvers();
+  const oldRequest = pollStatus();
+  deferred = null;
+  await pollStatus();
+  oldResponse.reject(Error('old poll'));
+  await oldRequest;
+  assert.equal(output.lease, current);
+  assert.equal(element('control').disabled, false);
+});
+
+test('a status response from before reopening the same USB device cannot authorize the new preview', async () => {
+  let deferred;
+  const {element,screen,pollStatus} = await openConsole({setupApi:url => url === '/api/status' ? deferred?.promise : undefined});
+  deferred = Promise.withResolvers();
+  const pending = pollStatus();
+  await element('stop-usb').onclick();
+  element('usb').onclick();
+  await waitFor(() => screen.width === 840);
+  deferred.resolve({state:'connected',activeDeviceId:'test-phone',active:1,keyboardActive:1});
+  await pending;
+  assert.equal(element('control').disabled,true);
+});
+
+test('switching USB targets waits for the previous capture process to release its device', async () => {
+  const devices=['phone-a','phone-b'].map(id=>({id,family:'iPhone',driver:'ready'}));
+  const released=Promise.withResolvers();
+  let stopping;
+  const {element,output}=await openConsole({devices,autoStart:false,setupApi:(url,data)=>{
+    if(url==='/api/usb/stop') { stopping=data.sessionId; return released.promise; }
+  }});
+  await element('usb').onclick();
+  element('device-list').children[0].onclick();
+  await waitFor(()=>output.device==='phone-a');
+  await element('usb').onclick();
+  element('device-list').children[1].onclick();
+  await delay(10);
+  assert.equal(output.device,'phone-a');
+  assert.equal(stopping,'stream-phone-a');
+  released.resolve({ok:true});
+  await waitFor(()=>output.device==='phone-b');
+});
+
+test('keyboard subscription loss cancels held modifiers before fresh keyboard input', async () => {
+  const status = {};
+  const {element, output, pollStatus, key} = await openConsole({status});
+  await element('control').onclick();
+  key('keydown','ControlLeft');
+  await waitFor(() => output.reports.some(r => r.modifiers === 8));
+  status.keyboardActive = 0;
+  await pollStatus();
+  assert.equal(output.lease, null);
+  key('keyup','ControlLeft');
+  status.keyboardActive = 1;
+  await pollStatus();
+  await element('control').onclick();
+  key('keydown','KeyA');
+  await waitFor(() => output.reports.some(r => r.keys?.includes(4)));
+  assert.equal(output.reports.at(-1).modifiers, 0);
+});
+
+test('a keyboard reconnect between status polls retires held modifier state', async () => {
+  const status = {keyboardGeneration:1};
+  const {element, output, pollStatus, key} = await openConsole({status});
+  await element('control').onclick();
+  key('keydown','ShiftLeft');
+  await waitFor(() => output.reports.some(r => r.modifiers === 2));
+  status.keyboardGeneration = 2;
+  await pollStatus();
+  assert.equal(output.lease, null);
+});
+
 test('clicking the picture focuses its keyboard and immediately forwards native text input after the click', async () => {
   const gate = Promise.withResolvers();
   const {element, emit, output, document} = await openConsole({alignmentGate:gate.promise});
@@ -467,16 +603,46 @@ test('native deletion without a physical key code forwards one backspace and ign
   assert.equal(output.stops,2);
 });
 
-test('preview identifies only the family of the current USB session', async () => {
-  for (const [family, label] of [['iPhone','iPhone'], ['iPad','iPad'], ['Apple','设备'], ['Private Name','设备']]) {
-    const {element} = await openConsole({family});
-    assert.equal(element('preview-heading').textContent, label === '设备' ? '设备屏幕' : label + ' 屏幕');
+test('current target keeps its name and short ID in preview, input and fullscreen; alias can be cleared', async () => {
+  const id = '0'.repeat(24)+'a123abcd';
+  const status = {deviceLabel:'会议室的 iPad', deviceAlias:''};
+  const devices = [{id, family:'iPad', name:status.deviceLabel, driver:'ready'}];
+  const {element, output, pollStatus} = await openConsole({family:'iPad', status, devices, setupApi:(url,data) => {
+    if (url === '/api/device/alias') { assert.equal(data.deviceId,id); return {alias:status.deviceAlias = data.alias.trim()}; }
+  }});
+  for (const name of [status.deviceLabel, '会议演示', '']) {
+    if (name !== status.deviceLabel) {
+      element('alias-input').value = name;
+      await element('device-alias').onsubmit({preventDefault(){}});
+      await pollStatus();
+    }
+    const label = (name || status.deviceLabel) + ' · A123ABCD';
+    assert.equal(element('preview-name').textContent + element('preview-code').textContent, label);
+    assert.equal(element('source-status').textContent, label);
+    assert.equal(element('fullscreen-name').textContent + element('fullscreen-code').textContent, label);
+    assert.equal(element('fullscreen-state').textContent,element('target-state').textContent);
     assert.equal(element('usb-canvas')['aria-label'], label + ' USB 实时画面');
-    assert.equal(element('source-status').textContent, label === '设备' ? '已连接' : label);
-    await element('stop-usb').onclick();
-    assert.equal(element('preview-heading').textContent, '设备屏幕');
-    assert.equal(element('picture-keyboard')['aria-label'], '设备画面键盘');
+    assert.equal(element('picture-keyboard')['aria-label'], label + ' 画面键盘');
   }
+  assert.ok(!output.routes.includes('/api/control/start'));
+  await element('stop-usb').onclick();
+  assert.equal(element('preview-name').textContent, '设备屏幕');
+  assert.equal(element('fullscreen-target').hidden,true);
+});
+
+test('ambiguous relative receivers show the recovery action and refresh without sending any input', async () => {
+  const status = {needsPairing:true,relativeBlocked:true,active:0,peers:[{id:'a',absolute:false},{id:'b',absolute:false}]};
+  const {element, output} = await openConsole({status,setupApi:()=>undefined});
+  assert.equal(element('refresh-pairing').hidden,false);
+  assert.match(element('position-detail').textContent,/只保留目标设备的 USB 线/);
+  assert.equal(element('control').disabled,true);
+  status.relativeBlocked=false;
+  status.peers.pop();
+  status.canIdentifyRelative=true;
+  await element('refresh-pairing').onclick();
+  assert.equal(element('refresh-pairing').hidden,true);
+  assert.equal(element('verify-position').textContent,'移动指针核对');
+  assert.equal(output.reports.length,0);
 });
 
 test('a half turn retires verified coordinates even when frame dimensions stay the same', async () => {
@@ -593,6 +759,31 @@ test('multiple Bluetooth peers are identified with movement only before clicks o
   assert.equal(element('position-status').textContent,'绝对坐标直达');
 });
 
+test('reopening a verified USB device rechecks only its previous Bluetooth candidate after re-enumeration', async () => {
+  const peers=[{id:'other',absolute:true},{id:'right',absolute:true}];
+  const status={needsPairing:true,peers};
+  let failRecheck=false;
+  const {element,screen,pollStatus,output}=await openConsole({absolute:true,status,probeError:req=>{
+    if(req.peerId==='other' || failRecheck) throw Error('No matching cursor');
+  }});
+  await element('verify-position').onclick();
+  assert.deepEqual(output.starts.map(r=>r.peerId),['other','right']);
+  for(const reject of [true,false]) {
+    failRecheck=reject;
+    await element('stop-usb').onclick();
+    status.needsPairing=true;
+    await element('usb').onclick();
+    await waitFor(()=>screen.width===840);
+    const previous=output.starts.length;
+    await pollStatus();
+    await waitFor(()=>output.starts.length>previous && output.lease===null);
+    await pollStatus();
+    assert.deepEqual(output.starts.slice(previous).map(r=>r.peerId),['right']);
+    assert.equal(element('control').disabled,reject);
+    assert.equal(output.reports.length,0);
+  }
+});
+
 test('an endpoint-only drag on a verified device preserves distinct held movement and release intervals', async () => {
   const {output,element,emit} = await openConsole({absolute:true});
   await element('verify-position').onclick();
@@ -686,7 +877,7 @@ test('relative-only peer stays locked until the displayed pointer motion is conf
   const {element,output,pollStatus} = await openConsole({status});
   assert.equal(element('verify-position').textContent,'移动指针核对');
   await element('verify-position').onclick();
-  assert.deepEqual(output.identified,{deviceId:'test-phone',peerId:'legacy-peer'});
+  assert.deepEqual(output.identified,{deviceId:'test-phone',peerId:'legacy-peer',sessionId:'stream-test-phone'});
   assert.equal(element('confirm-relative').hidden,false);
   assert.equal(element('control').disabled,true);
   assert.equal(output.bound,undefined);
@@ -703,6 +894,40 @@ test('relative-only peer stays locked until the displayed pointer motion is conf
 });
 
 const preparedSetup = {receiverReady:true, sourceInstallable:false, appleService:'ready', computerName:'Desk'};
+test('manual streaming shows first-frame retry and cancel at the selected device, then ignores late callbacks', async () => {
+  const frame = Promise.withResolvers();
+  const devices = [{id:'12345678', name:'工作 iPad', driver:'ready'}];
+  const {element,output,document} = await openConsole({autoStart:false,devices,frameGate:frame.promise});
+  await element('usb').onclick();
+  await waitFor(() => !!output.retryUsb);
+  assert.equal(element('connection-heading').textContent, '正在连接 工作 iPad');
+  assert.equal(element('start-actions').hidden, true);
+  assert.equal(element('cancel-opening').hidden, false);
+  assert.equal(document.activeElement, element('cancel-opening'));
+  assert.match(element('opening-progress').textContent,/12345678/);
+  output.retryUsb('正在重试当前设备');
+  assert.equal(element('opening-progress').textContent, '正在重试当前设备');
+  await element('cancel-opening').onclick();
+  frame.resolve();
+  output.retryUsb('迟到的重试');
+  await delay(0);
+  assert.equal(element('opening-progress').hidden, true);
+  assert.equal(element('start-actions').hidden, false);
+  assert.equal(element('transport').hidden, true);
+  assert.equal(document.activeElement, element('usb'));
+});
+
+test('manual Bluetooth pairing identifies the Windows computer and only consults ordinary status', async () => {
+  const status = {state:'idle',active:0,keyboardActive:0,computerName:'WINDOWS-TEST'};
+  const {element,output} = await openConsole({status,absolute:true,setupApi:()=>undefined});
+  assert.equal(element('pairing-help').hidden, true);
+  assert.equal(element('target-state').textContent, '仅预览');
+  await element('connect').onclick();
+  assert.equal(element('pairing-help').hidden, false);
+  assert.match(element('pairing-help').textContent,/所选设备.*选择电脑「WINDOWS-TEST」/);
+  assert.equal(element('target-state').textContent, '仅预览 · 等待蓝牙');
+  assert.ok(!output.routes.includes('/api/setup'));
+});
 const setupStatus = () => ({state:'connected', needsPairing:true, peers:[{id:'mouse',absolute:true,keyboard:true}]});
 test('setup selects one USB target, waits for its replug and first frame, pairs and verifies before enabling picture control', async () => {
   const phone = {id:'phone', family:'iPhone', driver:'missing'};
@@ -729,7 +954,8 @@ test('setup selects one USB target, waits for its replug and first frame, pairs 
   assert.equal(element('transport').hidden, true);
   frame.resolve();
   await waitFor(() => element('setup-title').textContent === '等待设备蓝牙配对');
-  assert.match(element('setup-detail').textContent,/Desk/);
+  assert.match(element('setup-detail').textContent,/选择电脑「Desk」/);
+  assert.equal(element('setup-target').textContent, '所选设备：iPhone · PHONE');
   Object.assign(status,setupStatus(),{active:1,keyboardActive:1,absoluteActive:1});
   await pollStatus();
   await done;
@@ -738,8 +964,8 @@ test('setup selects one USB target, waits for its replug and first frame, pairs 
   assert.deepEqual(output.bluetoothActions,['connect']);
   assert.deepEqual(output.routes.filter(url => url.startsWith('/api/setup')), ['/api/setup','/api/setup/receiver','/api/setup/apple-service','/api/setup/driver']);
   assert.equal(output.bound.deviceId, phone.id);
-  assert.equal(output.reports.length, 3);
-  assert.ok(output.reports.every(report => report.kind === 'absolute' && report.buttons === 0));
+  assert.equal(output.routes.filter(url=>url==='/api/control/verify-peer').length,1);
+  assert.equal(output.reports.length,0); // The server drives pairing probes.
   assert.ok(!output.routes.includes('/api/assistant/enable'));
 });
 
