@@ -18,7 +18,7 @@ internal sealed class ConsoleWindow : Form
     internal async void StartUsb()
     {
         if (!loaded) { pendingUsb = true; return; }
-        try { await view.CoreWebView2.ExecuteScriptAsync("document.getElementById('usb')?.click()"); }
+        try { await view.CoreWebView2.ExecuteScriptAsync("if (!document.getElementById('placeholder')?.hidden) document.getElementById('usb')?.click()"); }
         catch (ObjectDisposedException) { }
     }
 

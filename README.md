@@ -4,7 +4,7 @@
 
 **[下载 Windows x64 安装包（1.5.4）](https://github.com/LiuJH12138/ipad-bluetooth-mouse/releases/download/v1.5.4/iPad-Control-Console-1.5.4-win-x64.msi)**　·　[使用手册](docs/guide.md)
 
-正在试用 iPhone？本地预览版 1.6.0-preview.2 支持 iPhone 和 iPad 同时接线。在控制台点「切换设备」，就能选择这次要看、要控制的设备。上方 1.5.4 安装包与下方演示对应已发布的 iPad 版。[iPhone 接入步骤](docs/guide.md#在-windows-上控制-iphone) · [真机测试进度](docs/validation.md#iphone-开发版)
+**试用 iPhone 和 iPad 的新版界面。** 从当前源码启动预览版，在画面中央点「USB 直连」。两台设备可以同时接线，投屏后点画面右上角的「切换设备」即可换机。「操控方式」提供「仅预览」「画面操控」和「键鼠控制」，本机脚本通过独立的「允许助手控制」开关获得授权。[预览版使用步骤](docs/guide.md#在-windows-上控制-iphone) · [真机测试记录](docs/validation.md#iphone-开发版)
 
 ## 真机演示
 
@@ -15,6 +15,8 @@ https://github.com/user-attachments/assets/5f1bf887-d7e8-4cda-b56b-40dcded73699
 这段演示录自 USB 直连的 iPad。电脑鼠标点开 GitHub 搜索框，电脑键盘经蓝牙输入 <code>vscode</code>。iPad 显示对应的搜索建议后，控制台切换到全屏。片中剪去了等待时间，输入片段局部放大。[更多真机验证记录](docs/validation.md)
 
 ## 快速开始
+
+以下步骤和上方真机演示适用于已发布的 Windows 安装版 1.5.4。
 
 准备一台 **Windows 11 x64** 电脑、一根支持数据传输的 USB 线，以及一台已解锁的 iPad。需要键鼠控制时，电脑的蓝牙适配器须支持 **BLE 外设角色**。
 

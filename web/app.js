@@ -5,14 +5,15 @@ const token = location.hash.slice(1) || sessionStorage.getItem('control-token');
 if (location.hash) { sessionStorage.setItem('control-token', token); history.replaceState(null, '', '/'); }
 let lease, seq = 0, connected = false, keyboardConnected = false;
 let bluetoothState = 'idle', connecting = false;
-let inputChain = Promise.resolve(), leaseWait = null, controlEpoch = 0;
+let inputChain = Promise.resolve(), releaseWait = Promise.resolve(), leaseWait = null, controlEpoch = 0;
 let dx = 0, dy = 0, buttons = 0, inputBusy = false, frameBusy = false, frameEpoch = 0;
 let capturedPosition = null;
 const keyboard = new IpadKeyboard.KeyboardState();
 let noticeSource = '', lastBluetoothError = '';
 function notice(message, error = false, source = '') {
   noticeSource = source;
-  $('notice').textContent = message === verificationDetail ? '' : message;
+  const shownInSidebar = message === verificationDetail && !$('inspector').hidden && !document.fullscreenElement;
+  $('notice').textContent = shownInSidebar ? '' : message;
   $('notice').classList.toggle('error', error);
   $('fullscreen-error').textContent = error && document.fullscreenElement === $('monitor') ? message : '';
 }
@@ -29,12 +30,13 @@ let relativePeerId = null, relativeChallenge = null;
 let pointMode = false, aiming = false, usbFrameNumber = 0;
 let absoluteActive = false, absoluteVerified = false, absoluteTried = false, usbTurns = 0;
 let wakePointSample = null;
-let lastPoint = null, heldPointer = null, currentAction = null, pointPhase = '';
+let lastPoint = null, heldPointer = null, currentAction = null;
 const pictureQueue = [];
 let verificationDetail = '';
 let pointerLayout = 1;
 function resetVerification() {
   pointerLayout++;
+  lastInput('');
   relativeChallenge = null;
   if (capturedPosition || (pointMode && (aiming || heldPointer))) stopControl();
   if (assistantView) {
@@ -105,8 +107,55 @@ async function watchAssistantWindow(view) {
     update();
   }
 }
+function bluetoothRunning() { return connected || ['starting','waiting','connected'].includes(bluetoothState); }
+function lastInput(message) {
+  $('input-result').textContent = message;
+  $('input-row').hidden = !message;
+}
 function ready() { return connected && usbLive; }
 const monitor = $('monitor');
+const modePicker = $('mode-picker');
+const modeSummary = $('mode-summary');
+const modeChoices = [$('preview-mode'), $('point'), $('control')];
+let startingCapture = false;
+let capturedSession = null;
+function updateCaptureFocus(captured) {
+  if (captured) {
+    capturedSession = usbSession;
+  } else if (capturedSession && !document.pointerLockElement) {
+    const session = capturedSession;
+    capturedSession = null;
+    if (!document.hasFocus() || document.hidden) return;
+    // Fullscreen hides the entire toolbar during capture. Let the browser
+    // finish unlocking and make the summary focusable on the next frame.
+    window.requestAnimationFrame(() => {
+      const focus = document.activeElement;
+      if (session !== usbSession || !usbLive || pointMode || document.pointerLockElement || document.hidden || !document.hasFocus()) return;
+      if (focus === document.body || focus === usbCanvas || focus === $('control')) modeSummary.focus({preventScroll:true});
+    });
+  }
+}
+function closeModePicker(restoreFocus = false) {
+  modePicker.open = false;
+  if (restoreFocus) modeSummary.focus({preventScroll:true});
+}
+document.addEventListener('pointerdown', event => {
+  if (modePicker.open && !modePicker.contains(event.target)) closeModePicker();
+});
+modePicker.addEventListener('focusout', event => {
+  if (event.relatedTarget && !modePicker.contains(event.relatedTarget)) closeModePicker();
+});
+modePicker.addEventListener('keydown', event => {
+  if (!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return;
+  event.preventDefault();
+  modePicker.open = true;
+  const choices = modeChoices.filter(button => !button.disabled);
+  const index = choices.indexOf(document.activeElement);
+  const first = event.key === 'Home' || (index < 0 && event.key === 'ArrowDown');
+  const last = event.key === 'End' || (index < 0 && event.key === 'ArrowUp');
+  const step = event.key === 'ArrowDown' ? 1 : -1;
+  choices[first ? 0 : last ? choices.length-1 : (index+step+choices.length)%choices.length]?.focus();
+});
 const inspectorButton = $('toggle-inspector');
 function setSidebarVisible(visible) {
   const sidebar = $('inspector');
@@ -154,24 +203,35 @@ function update() {
     if (needsPairing && availablePeers.length) {
       status = pairing ? '正在识别蓝牙设备' : '待核对蓝牙设备';
       detail = relativePeerId ?
-        (relativeChallenge ? '请看当前投屏。只有亲眼看到设备指针刚才向右移动，才确认。' : '请先把设备指针放在画面中间，然后移动指针核对键鼠。') :
+        (relativeChallenge ? '确认当前设备上的指针刚刚向右移动。' : '请先把设备指针放在画面中间，然后移动指针核对键鼠。') :
         verificationDetail || (canPair ?
-        '在当前设备上打开静止页面。点下方按钮，控制台会逐台移动指针，用回传画面核对。' :
+        '在设备上打开静止页面，例如「设置 → 通用」。' :
         '请在这台设备上开启辅助触控，并在蓝牙设置中连接这台电脑。');
     } else if (!connected) { status = '等待蓝牙'; detail = '连接蓝牙后检查设备的指针输入。'; }
     else if (!absoluteActive) { status = '视觉定位'; detail = '设备尚未订阅绝对坐标输入。'; }
     else {
       status = probing ? '正在验证' : absoluteVerified ? '绝对坐标直达' : absoluteTried ? '视觉定位' : '等待验证';
-      detail = verificationDetail || '先在设备上打开背景简单、指针清晰的页面，例如「设置 → 通用」，再点验证。';
+      detail = verificationDetail || '在设备上打开静止页面，例如「设置 → 通用」。';
     }
   }
   $('position-status').textContent = status;
   $('position-status').classList.toggle('verified', absoluteVerified && available);
+  const verified = absoluteVerified && available;
+  $('position-detail').hidden = verified;
   if ($('position-detail').textContent !== detail) $('position-detail').textContent = detail;
+  $('verification-row').hidden = !verified;
+  $('verification-result').textContent = verified ? verificationDetail : '';
   const captured = !!document.pointerLockElement;
   $('transport').hidden = !usbLive;
-  $('transport-position').textContent = captured ? 'Esc 退出控制' : '';
-  $('source-status').textContent = usbLive ? (usbFamily ? usbFamily + ' · USB 直连' : 'USB 直连') : usbSession ? '正在连接…' : '未连接';
+  if (!usbLive) closeModePicker();
+  const captureMode = document.pointerLockElement === usbCanvas && !!lease;
+  const pictureMode = pointMode && ready() && !captured;
+  $('mode-current').textContent = captureMode ? '键鼠控制' : pictureMode ? '画面操控' : '仅预览';
+  $('preview-mode').setAttribute('aria-pressed', String(!pictureMode && !captureMode));
+  $('point').setAttribute('aria-pressed', String(pictureMode));
+  $('control').setAttribute('aria-pressed', String(captureMode));
+  $('capture-hint').hidden = !captureMode;
+  $('source-status').textContent = usbLive ? (usbFamily || '已连接') : usbSession ? '正在连接…' : '未连接';
   $('position-panel').hidden = !usbLive || (!connected && !(needsPairing && availablePeers.length));
   $('keyboard-row').hidden = !connected;
   $('verify-position').disabled = !available || aiming || pairing || !!document.pointerLockElement;
@@ -179,31 +239,29 @@ function update() {
   $('confirm-relative').hidden = !relativeChallenge;
   $('confirm-relative').disabled = pairing || !relativeChallenge;
   $('verify-position').textContent = pairing ? '正在核对…' : relativePeerId ? (relativeChallenge ? '再移动一次' : '移动指针核对') : needsPairing ? '核对蓝牙设备' : probing ? '验证中…' : absoluteVerified ? '重新验证' : '验证坐标';
-  $('point').disabled = !usbLive || !connected || !!document.pointerLockElement;
-  $('point').hidden = !usbLive || !connected || captured;
-  $('point').setAttribute('aria-pressed', String(pointMode));
-  $('point').textContent = pointMode ? '退出画面操控' : '画面操控';
-  usbCanvas.classList.toggle('point-mode', pointMode);
+  $('point').disabled = !ready() || pairing || startingCapture;
+  usbCanvas.classList.toggle('point-mode', pictureMode);
   pictureKeyboard.disabled = !canPoint() || !keyboardConnected;
   $('assistant').disabled = aiming || assistantChanging || !usbLive;
   $('assistant').textContent = assistantView ? '停止助手控制' : '允许助手控制';
   $('assistant').setAttribute('aria-pressed', String(!!assistantView));
   fullscreenButton.hidden = !document.fullscreenEnabled || (!usbLive && document.fullscreenElement !== monitor);
-  monitor.classList.toggle('captured', !!document.pointerLockElement && !!lease);
-  $('control').disabled = aiming || !ready() || captured;
-  const bluetoothRunning = connected || ['starting','waiting','connected'].includes(bluetoothState);
+  monitor.classList.toggle('captured', captureMode);
+  updateCaptureFocus(captureMode);
+  $('control').disabled = aiming || !ready() || pairing || startingCapture;
+  const running = bluetoothRunning();
   $('connect').disabled = connecting;
-  $('connect').hidden = bluetoothRunning;
-  $('disconnect').hidden = !bluetoothRunning;
-  $('release').hidden = !captured || !lease;
-  $('control').hidden = !ready() || captured;
+  $('connect').textContent = running ? '断开' : '连接';
+  $('connect').setAttribute('aria-label', running ? '断开蓝牙' : '连接蓝牙');
+  $('pairing-help').hidden = connected;
   $('stop-usb').disabled = !usbSession;
   $('stop-usb').hidden = $('stop-usb').disabled;
-  $('switch-device').hidden = !usbLive;
-  $('switch-device').disabled = openingDevice;
-  $('usb').disabled = !!usbSession || openingDevice;
-  $('usb').textContent = usbSession && !usbLive ? '正在连接…' : 'USB 直连';
-  $('mode-label').textContent = aiming ? pointPhase : pointMode ? '画面操控' : document.pointerLockElement ? '键鼠控制中' : '预览模式';
+  const usbAction = $('usb');
+  const usbSlot = $(usbLive ? 'active-usb-action' : 'idle-usb-action');
+  if (usbAction.parentElement !== usbSlot) usbSlot.append(usbAction);
+  usbAction.disabled = openingDevice || (!!usbSession && !usbLive);
+  usbAction.classList.toggle('primary', !usbLive);
+  usbAction.textContent = usbLive ? '切换设备' : usbSession ? '正在连接…' : 'USB 直连';
   document.body.classList.toggle('controlling', !!lease);
 }
 async function clearFrame() { frameEpoch++; try { await api('frame/clear', {}); } catch {} }
@@ -217,7 +275,8 @@ async function stopControl(keepPoint = false) {
   }
   controlEpoch++; const old = lease; lease = null; keyboard.clear(); capturedPosition = null; buttons = 0; dx = dy = 0;
   if (document.pointerLockElement) document.exitPointerLock();
-  if (old) try { await api('control/stop', { lease: old }, { keepalive: true }); } catch {}
+  if (old) releaseWait = api('control/stop', { lease: old }, { keepalive: true }).catch(()=>{});
+  await releaseWait;
   update();
 }
 async function ensureLease() {
@@ -226,6 +285,8 @@ async function ensureLease() {
   if (leaseWait) return leaseWait;
   const epoch = controlEpoch;
   leaseWait = (async () => {
+    await releaseWait;
+    if (epoch !== controlEpoch || !ready()) throw new Error('控制已取消。');
     const result = await api('control/start', usbDeviceId ? {deviceId:usbDeviceId} : {});
     if (epoch !== controlEpoch || !ready()) {
       await api('control/stop', { lease: result.lease });
@@ -316,8 +377,7 @@ async function chooseUsbDevice(autoConnect) {
     if (revision === deviceListing) $('refresh-devices').disabled = false;
   }
 }
-$('usb').onclick = () => chooseUsbDevice(true);
-$('switch-device').onclick = () => chooseUsbDevice(false);
+$('usb').onclick = () => chooseUsbDevice(!usbLive);
 $('refresh-devices').onclick = () => chooseUsbDevice(false);
 $('close-devices').onclick = closeDevicePicker;
 devicePicker.addEventListener('cancel', () => { deviceListing++; });
@@ -361,7 +421,7 @@ async function openUsbDevice(deviceId) {
         $('placeholder').hidden = true;
         $('video-dot').classList.add('on');
         $('video-status').textContent = 'USB 直连 · 已收到画面';
-        notice('USB 画面已接入。连接蓝牙后即可开始键鼠控制。');
+        notice('');
         last = performance.now();
         update();
       }
@@ -379,32 +439,62 @@ async function openUsbDevice(deviceId) {
     if (usbSession === session) await stopUsb();
   }
 }
-$('stop-usb').onclick = async () => { await stopUsb(); notice('已停止投屏'); };
+$('stop-usb').onclick = async () => { await stopUsb(); notice(''); };
 $('connect').onclick = async () => {
-  connecting = true; update();
-  try { const status = await api('connect', {}); bluetoothState = status.state; }
-  catch(e) { notice(e.message,true); }
+  if (connecting) return;
+  const disconnect = bluetoothRunning();
+  connecting = true;
+  statusRevision++;
+  update();
+  try {
+    if (disconnect) {
+      pointMode = false;
+      await stopControl();
+      await api('disconnect', {});
+      connected = keyboardConnected = false;
+      bluetoothState = 'idle';
+    } else {
+      const status = await api('connect', {});
+      bluetoothState = status.state;
+    }
+    await updateBluetooth();
+  } catch (error) { notice(error.message,true); }
   finally { connecting = false; update(); }
 };
-$('disconnect').onclick = async () => { await stopControl(); try { await api('disconnect', {}); connected = false; update(); } catch(e) { notice(e.message,true); } };
 $('control').onclick = async () => {
+  if (!ready() || startingCapture || aiming || pairing) return;
+  closeModePicker();
+  if (document.pointerLockElement === usbCanvas && lease) return;
+  const previousFocus = document.activeElement;
+  startingCapture = true;
+  pointMode = false;
   try {
-    pointMode=false;
-    // Call within the direct click gesture; acquire a control lease after the browser grants capture.
-    await usbCanvas.requestPointerLock();
+    const released = stopControl();
+    const epoch = controlEpoch;
+    // Request the browser lock in the actual menu button's activation, before
+    // awaiting cleanup of the preceding mode or acquiring its replacement lease.
+    await Promise.all([usbCanvas.requestPointerLock(), released, leaseWait?.catch(() => {})]);
+    if (epoch !== controlEpoch || !ready()) throw new Error('控制已取消。');
     if(document.pointerLockElement !== usbCanvas) throw new Error('鼠标捕获已取消。');
     await ensureLease();
     if (usbLive && absoluteVerified && absoluteActive) {
       capturedPosition = {x:0.5, y:0.5};
       await send();
       if (!lease) return;
-      notice('键鼠控制中 · 指针从画面中央开始，移动后点按。按 Esc 退出。');
-    } else {
-      notice('键鼠控制中 · 相对鼠标。若左键无响应，按 Esc 后在 USB 预览中验证坐标，再开始控制。');
     }
-  } catch(e) { await stopControl(); notice('未进入鼠标捕获。请重试或使用 USB 画面操控。' + e.message, true); }
+    notice('');
+  } catch(e) {
+    await stopControl();
+    if (usbLive && document.hasFocus() && (document.activeElement === previousFocus || document.activeElement === document.body)) modeSummary.focus({preventScroll:true});
+    notice('未进入鼠标捕获。' + e.message, true);
+  } finally { startingCapture = false; update(); }
 };
-document.addEventListener('pointerlockchange', () => { if (!document.pointerLockElement) stopControl(); update(); });
+document.addEventListener('pointerlockchange', () => {
+  if (!document.pointerLockElement && !pointMode && (lease || startingCapture)) {
+    stopControl();
+  }
+  update();
+});
 document.addEventListener('mousemove', e => { if (document.pointerLockElement && lease) { dx += e.movementX * Number($('speed').value); dy += e.movementY * Number($('speed').value); dx=Math.max(-508,Math.min(508,dx)); dy=Math.max(-508,Math.min(508,dy)); } });
 for (const event of ['mousedown','mouseup']) document.addEventListener(event, e => {
   if (document.pointerLockElement && lease && e.button >= 0 && e.button <= 2) {
@@ -451,14 +541,15 @@ async function updateBluetooth() {
     }
     if (assistantView && !assistantChanging && !status.assistantEnabled) { assistantView=null; notice('助手控制已结束。'); }
     $('keyboard-status').textContent = keyboardConnected ? '已连接' : connected ? '需重新配对' : '尚未连接';
-    const text={idle:'尚未启动',starting:'正在启动蓝牙…',waiting:'等待设备连接',connected:'已连接 · 1 台设备',error:'启动失败，可点击连接重试'};
+    const text={idle:'未连接',starting:'正在启动…',waiting:'等待配对',connected:'已连接',error:'连接失败'};
     $('bluetooth-status').textContent = needsPairing && availablePeers.length ? '等待设备核对' :
       ambiguous ? '检测到多个蓝牙连接' : (text[status.state] || status.state);
     if (status.error && status.error !== lastBluetoothError) notice(status.error, true, 'bluetooth');
     if (!status.error && noticeSource === 'bluetooth') notice('');
     lastBluetoothError = status.error || '';
-    if(!connected && lease) await stopControl(); update();
-  } catch(e) { connected=false; absoluteActive=false; resetVerification(); await stopControl(); notice('本机服务不可用，请重新运行启动器。',true); }
+    if (!connected) { pointMode = false; if (lease) await stopControl(); }
+    update();
+  } catch(e) { pointMode=false; connected=false; absoluteActive=false; resetVerification(); await stopControl(); notice('本机服务不可用，请重新运行启动器。',true); }
 }
 setInterval(updateBluetooth,1000);
 function frameCanvas() {
@@ -497,12 +588,17 @@ function sendKeys(report) {
   });return inputChain;
 }
 for(const type of ['keydown','keyup'])document.addEventListener(type,e=>{
+  if (e.code==='Escape' && type==='keydown' && modePicker.open) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    closeModePicker(true);
+    return;
+  }
   if (e.code==='Escape' && pointMode && type==='keydown') {
-    pointMode=false; stopControl(); return;
+    pointMode=false; stopControl(); modeSummary.focus({preventScroll:true}); return;
   }
   const pictureFocused = hasPictureKeyboardFocus();
   if (!pictureFocused && !(document.pointerLockElement && lease)) return;
-  if(e.code==='Escape'){stopControl();return;}
+  if(e.code==='Escape'){ stopControl(); return; }
   if (!keyboardConnected) { notice('键盘尚未连接，请检查蓝牙。',true); return; }
   if (pictureFocused && e.ctrlKey && !e.altKey && (e.code==='KeyV' || e.key?.toLowerCase()==='v')) return;
   const code = e.code && e.code !== 'Unidentified' ? e.code : e.key;
@@ -526,7 +622,12 @@ for(const type of ['keydown','keyup'])document.addEventListener(type,e=>{
   processPictureQueue();
 },true);
 $('command-control').onchange=()=>{keyboard.commandControl=$('command-control').checked;keyboard.clear();if(lease&&keyboardConnected)sendKeys(keyboard.report());};
-$('release').onclick=stopControl;
+$('preview-mode').onclick=async () => {
+  pointMode=false;
+  closeModePicker(true);
+  await stopControl();
+  notice('');
+};
 function hasPictureKeyboardFocus() {
   return canPoint() && document.activeElement === pictureKeyboard;
 }
@@ -567,10 +668,14 @@ pictureKeyboard.addEventListener('beforeinput', e => {
 if (startUsb) $('usb').click();
 
 $('point').onclick = async () => {
-  pointMode = !pointMode;
-  await stopControl();
-  if (pointMode) focusPictureKeyboard();
-  notice(pointMode ? '点选画面里的输入框即可打字。按 Esc 退出画面操控。' : '已退出画面操控。');
+  if (!ready() || startingCapture || pairing) return;
+  closeModePicker();
+  if (!pointMode) {
+    pointMode = true;
+    await stopControl();
+  }
+  if (canPoint()) focusPictureKeyboard();
+  notice('');
   update();
 };
 
@@ -744,7 +849,6 @@ async function runPictureAction(action) {
     absoluteVerified = false;
     verificationDetail = '正在检查三个落点，请保持画面静止。';
     notice('');
-    pointPhase = '正在验证绝对坐标';
     lastPoint = null;
     update();
     try {
@@ -766,7 +870,6 @@ async function runPictureAction(action) {
   const phoneScroll = direct && usbFamily === 'iPhone' && action.wheel !== undefined;
   if (phoneScroll && !action.wheel) return;
   const gesture = action.gesture;
-  pointPhase = direct ? '发送目标坐标' : '正在定位指针';
   update();
   const started = performance.now();
   let moves = 0;
@@ -816,11 +919,10 @@ async function runPictureAction(action) {
       await new Promise(resolve => setTimeout(resolve,64));
       validate();
     } while (action.wheel);
-    notice('已发送滚轮输入。');
+    lastInput('滚轮');
     return;
   }
   if (gesture) {
-    pointPhase = '鼠标操控中';
     update();
     const moveHeld = direct ? async (point, mask) => {
       const next = absoluteCoordinates(point,geometry.w,geometry.h);
@@ -833,7 +935,7 @@ async function runPictureAction(action) {
     const result = await gesture.play({report:sendButton, validate, moveHeld, paceAbsoluteDrag:direct});
     if (result.dragged) lastPoint = null;
     const label = result.dragged ? '拖动完成' : '按键已松开';
-    notice(label + ' · 按住 ' + result.heldMs + ' 毫秒 · 定位 ' + aimMs + ' 毫秒');
+    lastInput(label + ' · 按住 ' + result.heldMs + ' ms · 定位 ' + aimMs + ' ms');
   } else {
     let scrolled = 0;
     while (action.wheel) {
@@ -842,7 +944,7 @@ async function runPictureAction(action) {
       await report(0,0,0,ticks);
       scrolled += ticks;
     }
-    if (scrolled) notice('滚动完成 · 定位 ' + aimMs + ' 毫秒');
+    if (scrolled) lastInput('滚轮 · 定位 ' + aimMs + ' ms');
   }
 }
 
@@ -864,14 +966,13 @@ async function processPictureQueue() {
         }
         if (epoch === controlEpoch && hasPictureKeyboardFocus() && keyboardConnected) {
           if (restore.modifiers || restore.keys.length) await sendKeys(restore);
-          notice('键盘输入已发送。');
+          lastInput('键盘输入');
         }
       } else if (currentAction.keyboardReport) {
         await ensureLease();
         if (epoch !== controlEpoch || !hasPictureKeyboardFocus()) break;
-        pointPhase='键盘输入中';
         await sendKeys(currentAction.keyboardReport);
-        if (epoch===controlEpoch && !currentAction?.keyboardReport?.keys.length && !keyboard.pressed.size) notice('键盘输入已发送。');
+        if (epoch===controlEpoch && !currentAction?.keyboardReport?.keys.length && !keyboard.pressed.size) lastInput('键盘输入');
       } else {
         await runPictureAction(currentAction);
       }

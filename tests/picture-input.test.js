@@ -14,7 +14,7 @@ class Control extends EventTarget {
   showModal() { this.open = true; }
   close() { this.open = false; }
   replaceChildren(...nodes) { this.children = nodes; }
-  append(child) { this.children.push(child); }
+  append(child) { this.children.push(child); child.parentElement = this; }
   contains(node) { return node === this; }
   classList = {toggle() {}, add() {}, remove() {}};
   setAttribute(name, value) { this[name] = value; }
@@ -46,9 +46,10 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
     return controls.get(id);
   }
   const document = Object.assign(new EventTarget(), {
-    body: new Control(), getElementById: element, createElement: () => new Control()
+    body: new Control(), getElementById: element, createElement: () => new Control(), hasFocus: () => true
   });
   const window = new EventTarget();
+  window.requestAnimationFrame = callback => setTimeout(callback, 0);
   window.matchMedia = () => Object.assign(new EventTarget(), {matches: false});
   const timers = new Map();
   const output = {targets: [], heldTargets: [], reports: [], stops: 0, physicalButtons: 0, lease: null};
@@ -56,6 +57,15 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
     const data = options.body && JSON.parse(options.body);
     let result = {};
     switch (url) {
+      case '/api/connect':
+        (output.bluetoothActions ||= []).push('connect');
+        Object.assign(status,{state:'waiting',active:0,keyboardActive:0});
+        result = status;
+        break;
+      case '/api/disconnect':
+        (output.bluetoothActions ||= []).push('disconnect');
+        Object.assign(status,{state:'idle',active:0,keyboardActive:0});
+        break;
       case '/api/devices': result = {devices}; break;
       case '/api/assistant/disable': output.revoked = true; break;
       case '/api/status': result = {activeDeviceId:output.device, active: 1, keyboardActive: 1, absoluteActive: Number(absolute), state: 'connected', ...status}; break;
@@ -281,6 +291,116 @@ test('picture keyboard holds modifiers across mouse clicks and releases on focus
   assert.equal(key('keydown','Digit7').defaultPrevented,false);
 });
 
+test('the mode picker selects picture input and preview, with independent assistant permission', async () => {
+  const {element, output, key, document} = await openConsole({absolute:true});
+  const current = element('mode-current');
+  assert.equal(current.textContent, '仅预览');
+  assert.equal(element('preview-mode')['aria-pressed'], 'true');
+  await element('assistant').onclick();
+  await element('point').onclick();
+  assert.equal(current.textContent, '画面操控');
+  assert.equal(element('point')['aria-pressed'], 'true');
+  assert.equal(document.activeElement, element('picture-keyboard'));
+  key('keydown', 'ShiftLeft');
+  await waitFor(() => output.reports.some(report => report.modifiers === 2));
+  await element('point').onclick();
+  assert.ok(output.lease);
+  await element('preview-mode').onclick();
+  assert.equal(output.lease, null);
+  assert.equal(current.textContent, '仅预览');
+  assert.equal(document.activeElement, element('mode-summary'));
+  assert.equal(element('assistant')['aria-pressed'], 'true');
+  assert.equal(key('keydown', 'KeyA').defaultPrevented, false);
+});
+
+test('capture requests pointer lock inside the choice activation, switches out cleanly and follows native unlock', async () => {
+  const {element, screen, output, key, document} = await openConsole();
+  const current = element('mode-current');
+  key('keydown', 'ShiftLeft');
+  await waitFor(() => !!output.lease);
+  let requested = false;
+  screen.requestPointerLock = async () => {
+    requested = true;
+    document.pointerLockElement = screen;
+  };
+  const capture = element('control').onclick();
+  assert.equal(requested, true);
+  await capture;
+  assert.equal(output.stops, 1);
+  assert.equal(current.textContent, '键鼠控制');
+  assert.equal(element('capture-hint').hidden, false);
+  await element('point').onclick();
+  assert.equal(document.pointerLockElement, null);
+  assert.equal(output.lease, null);
+  assert.equal(current.textContent, '画面操控');
+  assert.equal(element('capture-hint').hidden, true);
+  await element('control').onclick();
+  document.exitPointerLock();
+  document.dispatchEvent(new Event('pointerlockchange'));
+  await waitFor(() => current.textContent === '仅预览');
+  assert.equal(output.lease, null);
+  assert.equal(element('control')['aria-pressed'], 'false');
+});
+
+for (const exit of ['native', 'keyboard', 'other control', 'window blur']) {
+  test('fullscreen capture restores focus after the toolbar reappears: ' + exit, async () => {
+    const {element, document, window, key} = await openConsole({absolute:true});
+    const monitor = element('monitor');
+    const frames = [];
+    let captured = false;
+    let inFront = true;
+    monitor.classList.toggle = (name, enabled) => { if (name === 'captured') captured = enabled; };
+    document.hasFocus = () => inFront;
+    window.requestAnimationFrame = callback => { frames.push(callback); return frames.length; };
+    document.fullscreenElement = monitor;
+    const summary = element('mode-summary');
+    summary.focus = () => { if (!captured && inFront) document.activeElement = summary; };
+    await element('control').onclick();
+    assert.equal(captured, true);
+    document.activeElement = document.body;
+    if (exit === 'keyboard') key('keydown', 'Escape');
+    document.exitPointerLock();
+    document.dispatchEvent(new Event('pointerlockchange'));
+    await waitFor(() => element('mode-current').textContent === '仅预览');
+    if (exit === 'other control') element('assistant').focus();
+    if (exit === 'window blur') inFront = false;
+    for (const callback of frames) callback();
+    const expected = exit === 'other control' ? element('assistant') : exit === 'window blur' ? document.body : summary;
+    assert.equal(document.activeElement === expected, true);
+  });
+}
+
+test('a rejected capture in fullscreen restores preview, focus and an actionable error', async () => {
+  const {element, screen, output, document} = await openConsole();
+  document.fullscreenElement = element('monitor');
+  screen.requestPointerLock = async () => { throw Error('permission denied'); };
+  await element('control').onclick();
+  assert.equal(element('mode-current').textContent, '仅预览');
+  assert.equal(element('capture-hint').hidden, true);
+  assert.equal(output.lease, null);
+  assert.equal(document.activeElement, element('mode-summary'));
+  assert.match(element('fullscreen-error').textContent, /permission denied/);
+});
+
+test('keyboard navigation keeps an open mode picker local and Escape leaves picture input on the next press', async () => {
+  const {element, document, key, output} = await openConsole();
+  const picker = element('mode-picker');
+  const arrow = key => picker.dispatchEvent(Object.assign(new Event('keydown', {cancelable:true}), {key}));
+  element('mode-summary').focus();
+  arrow('ArrowDown');
+  assert.equal(picker.open, true);
+  assert.equal(document.activeElement, element('preview-mode'));
+  arrow('End');
+  assert.equal(document.activeElement, element('control'));
+  assert.equal(key('keydown','Escape').defaultPrevented, true);
+  assert.equal(picker.open, false);
+  assert.equal(element('mode-current').textContent, '画面操控');
+  assert.equal(document.activeElement, element('mode-summary'));
+  key('keydown','Escape');
+  await waitFor(() => element('mode-current').textContent === '仅预览');
+  assert.deepEqual(output.reports, []);
+});
+
 test('verified mouse capture delivers pending motion and both button edges on one absolute pointer', async () => {
   const {document, element, output} = await openConsole({absolute:true});
   await element('verify-position').onclick();
@@ -346,7 +466,7 @@ test('preview identifies only the family of the current USB session', async () =
     const {element} = await openConsole({family});
     assert.equal(element('preview-heading').textContent, label === '设备' ? '设备屏幕' : label + ' 屏幕');
     assert.equal(element('usb-canvas')['aria-label'], label + ' USB 实时画面');
-    assert.equal(element('source-status').textContent, label === '设备' ? 'USB 直连' : label + ' · USB 直连');
+    assert.equal(element('source-status').textContent, label === '设备' ? '已连接' : label);
     await element('stop-usb').onclick();
     assert.equal(element('preview-heading').textContent, '设备屏幕');
     assert.equal(element('picture-keyboard')['aria-label'], '设备画面键盘');
@@ -397,6 +517,19 @@ test('portrait targeting follows the live canvas bounds across window and fullsc
   }
 });
 
+test('one Bluetooth action starts pairing and can stop while waiting for a device', async () => {
+  const status = {state:'idle',active:0,keyboardActive:0};
+  const {element,output} = await openConsole({status,absolute:true});
+  const action = element('connect');
+  assert.equal(action['aria-label'],'连接蓝牙');
+  await action.onclick();
+  assert.equal(action['aria-label'],'断开蓝牙');
+  assert.equal(element('bluetooth-status').textContent,'等待配对');
+  await action.onclick();
+  assert.equal(action['aria-label'],'连接蓝牙');
+  assert.deepEqual(output.bluetoothActions,['connect','disconnect']);
+});
+
 test('Bluetooth retry clears its previous notice from the normal and fullscreen display',async()=>{
   const status = {state:'error',active:0,error:'另一控制台正使用蓝牙，请在旧窗口断开蓝牙后重试。'};
   const {element,document,pollStatus}=await openConsole({status,absolute:true});
@@ -424,7 +557,7 @@ test('multiple USB devices require a choice and switching retires the assistant 
   await element('verify-position').onclick();
   await waitFor(()=>element('position-status').textContent==='绝对坐标直达');
   await element('assistant').onclick();
-  await element('switch-device').onclick();
+  await element('usb').onclick();
   assert.equal(element('device-list').children[0].disabled,true);
   element('device-list').children[1].onclick();
   await waitFor(()=>output.device===devices[1].id);
@@ -441,7 +574,7 @@ test('multiple Bluetooth peers are identified with movement only before clicks o
   const status = {needsPairing:true,peers};
   const {element,output} = await openConsole({absolute:true,status,
     probeError: req => { if (req.peerId==='wrong') throw Error('No matching cursor on the USB frame'); }});
-  assert.equal(element('point').hidden,true);
+  assert.equal(element('point').disabled,true);
   assert.equal(element('control').disabled,true);
   assert.equal(element('verify-position').textContent,'核对蓝牙设备');
   await element('verify-position').onclick();
@@ -450,7 +583,7 @@ test('multiple Bluetooth peers are identified with movement only before clicks o
   assert.equal(output.bound.peerId,'right');
   assert.equal(output.bound.deviceId,'test-phone');
   assert.equal(output.lease,null);
-  assert.equal(element('point').hidden,false);
+  assert.equal(element('point').disabled,false);
   assert.equal(element('position-status').textContent,'绝对坐标直达');
 });
 
