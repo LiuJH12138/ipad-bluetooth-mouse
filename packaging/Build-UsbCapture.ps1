@@ -29,6 +29,7 @@ if (!(Test-Path -LiteralPath $compiler)) {
 $null = New-Item -ItemType Directory -Force -Path $Materials
 $sourceBase = 'https://raw.githubusercontent.com/SimonDaBoss/mirrorlab/ade4e6429690ebcf430ea19a142a2e01546da8ef/resources/usb/source'
 $digests = @{
+    'usb-driver.ps1' = 'DDA78182B0748F18D989BDAA22AFE80D08AC816AA10F4A56CE82D242229B01DF'
     'iphonemirror-source.tar.gz' = '48BCCDA23BB4B7C4E4312378FEDE26D0C59EE125F9A003F5CE7D4E3176EB054D'
     'mirrorlab_bridge.h' = 'A831018BB754214ABCCEBB0260C19259031B6D8C1BA6E83DAAE23DAD1BE693CB'
     'iphone-usb.cpp' = '9C60EA96307288BE8AA80BE4B26CEE877CB26CD6CC101E14CF2EA91C15029AF5'
@@ -45,6 +46,14 @@ foreach ($name in $digests.Keys) {
 $archive = Join-Path $Materials 'iphonemirror-source.tar.gz'
 tar.exe -xf $archive -C $upstream
 if ($LASTEXITCODE -ne 0) { throw 'Failed to extract the USB source' }
+# Ship the verified, device-specific setup materials alongside the receiver.
+$payload = Join-Path $upstream 'src/DriverInstaller/Assets/libusb-win32-1.2.6.0'
+$driverDir = Join-Path $Destination 'driver'
+$null = New-Item -ItemType Directory -Force -Path $driverDir
+Copy-Item -LiteralPath (Join-Path $Materials 'usb-driver.ps1') -Destination $driverDir -Force
+foreach ($name in 'amd64/install-filter.exe','amd64/libusb0.dll','amd64/libusb0.sys','x86/libusb0_x86.dll') {
+    Copy-Item -LiteralPath (Join-Path $payload $name) -Destination $driverDir -Force
+}
 $source = [IO.File]::ReadAllText((Join-Path $Materials 'iphone-usb.cpp'))
 $old = 'if (now - last > std::chrono::seconds(15)) throw std::runtime_error("No USB media received for 15 seconds");'
 $replacement = @'

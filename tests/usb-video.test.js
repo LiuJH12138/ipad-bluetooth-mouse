@@ -136,3 +136,65 @@ test('USB picker targets an exact live device, validates Windows presence and hi
   await assert.rejects(usb.target(target.id),/设备/);
   assert.equal((await usb.target()).serial,pad.serial);
 });
+
+test('driver setup resolves only the chosen physical device and rechecks its parent before elevation',async()=>{
+  const {UsbVideo}=require('../lib/usb-video');
+  const serials=['000080112233445566778899','000081002233445566778899'];
+  let parentService='usbccgp', state='missing', active=serials, finish;
+  const entered=[];
+  const usb=new UsbVideo({run:async(_exe,args)=>{
+    if(args[0]==='--list') return {stdout:JSON.stringify(active.map(serial=>({serial,driver:state})))};
+    if(args[0]==='--driver') return {stdout:JSON.stringify({present:active.includes(args[1]),driver:state,parentService,
+      instanceId:['USB','VID_05AC&PID_12A8',args[1]].join(String.fromCharCode(92))})};
+    return {stdout:active.join('\n')};
+  },installFilter:async serial=>{entered.push(serial);return new Promise(resolve=>{finish=resolve;});}});
+  const [a,b]=await usb.devices();
+  for(const value of [undefined,'','../driver.ps1','0'.repeat(32)]) await assert.rejects(usb.setupDevice(value));
+  parentService='WinUSB';
+  await assert.rejects(usb.setupDevice(a.id),/Apple|主驱动/);
+  parentService='usbccgp'; state='ready';
+  assert.deepEqual(await usb.setupDevice(a.id),{status:'ready'});
+  state='replug';
+  assert.deepEqual(await usb.setupDevice(a.id),{status:'replug'});
+  assert.deepEqual(entered,[]);
+  state='missing';
+  const first=usb.setupDevice(b.id), repeated=usb.setupDevice(b.id);
+  await new Promise(r=>setImmediate(r));
+  assert.deepEqual(entered,[serials[1]]);
+  await assert.rejects(usb.setupDevice(a.id),{status:409});
+  finish('cancelled');
+  assert.deepEqual(await Promise.all([first,repeated]),[{status:'cancelled'},{status:'cancelled'}]);
+  const retry=usb.setupDevice(b.id);
+  await new Promise(r=>setImmediate(r));
+  active=[serials[0]]; finish('installed');
+  assert.deepEqual(await retry,{status:'replug'});
+  assert.deepEqual(entered,[serials[1],serials[1]]);
+});
+
+test('driver setup rejects an instance mismatch or an active video stream before elevation',async()=>{
+  const {UsbVideo}=require('../lib/usb-video');
+  const serial='000080112233445566778899';
+  let installs=0;
+  const usb=new UsbVideo({run:async(_exe,args)=>{
+    if(args[0]==='--list') return {stdout:JSON.stringify([{serial,driver:'missing'}])};
+    if(args[0]==='--driver') return {stdout:JSON.stringify({present:true,driver:'missing',parentService:'usbccgp',
+      instanceId:['USB','VID_05AC&PID_12A8','000080999999999999999999'].join(String.fromCharCode(92))})};
+    return {stdout:serial};
+  },installFilter:async()=>{installs++;}});
+  const [device]=await usb.devices();
+  await assert.rejects(usb.setupDevice(device.id),{status:409});
+  usb.busy=true;
+  await assert.rejects(usb.setupDevice(device.id),/停止投屏/);
+  assert.equal(installs,0);
+});
+
+test('incomplete driver payload and invalid serial never request UAC',async()=>{
+  const {installFilter}=require('../lib/usb-setup');
+  const path=require('node:path');
+  const dir=path.join(__dirname,'unavailable-driver-fixture');
+  let calls=0;
+  const run=async()=>{calls++;};
+  await assert.rejects(installFilter('bad;command',dir,run),/标识/);
+  await assert.rejects(installFilter('0000000000000000',dir,run),{status:503});
+  assert.equal(calls,0);
+});

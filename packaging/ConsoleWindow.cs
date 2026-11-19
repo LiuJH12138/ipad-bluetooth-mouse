@@ -49,7 +49,17 @@ internal sealed class ConsoleWindow : Form
             core.Settings.AreDefaultContextMenusEnabled = false;
             core.Settings.AreHostObjectsAllowed = false;
             core.Settings.IsWebMessageEnabled = false;
-            core.NewWindowRequested += (s, args) => args.Handled = true;
+            core.NewWindowRequested += (s, args) => {
+                args.Handled = true;
+                const string appleDevices = "https://apps.microsoft.com/detail/9np83lwlpz9k";
+                if (args.IsUserInitiated && string.Equals(args.Uri, appleDevices, StringComparison.Ordinal)) {
+                    try {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(appleDevices) { UseShellExecute = true });
+                    } catch (System.ComponentModel.Win32Exception) {
+                        MessageBox.Show(this, "请在 Microsoft Store 搜索 Apple Devices。", Text);
+                    }
+                }
+            };
             core.NavigationStarting += (s, args) => {
                 Uri destination;
                 args.Cancel = !Uri.TryCreate(args.Uri, UriKind.Absolute, out destination)
@@ -63,10 +73,19 @@ internal sealed class ConsoleWindow : Form
             core.Navigate(session.AbsoluteUri);
         } catch (Exception error) {
             if (IsDisposed || Disposing) return;
-            var message = error is WebView2RuntimeNotFoundException
-                ? "请安装 Microsoft Edge WebView2 Evergreen Runtime (x64)，再打开控制台。下载地址：https://developer.microsoft.com/microsoft-edge/webview2/"
-                : "控制台窗口启动失败：" + error.Message;
-            MessageBox.Show(this, message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (error is WebView2RuntimeNotFoundException) {
+                const string download = "https://developer.microsoft.com/microsoft-edge/webview2/";
+                if (MessageBox.Show(this, "缺少 Microsoft WebView2。打开微软下载页？安装 Evergreen Runtime 后重新打开控制台。", Text,
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes) {
+                    try {
+                        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(download) { UseShellExecute = true });
+                    } catch (System.ComponentModel.Win32Exception) {
+                        MessageBox.Show(this, download, Text);
+                    }
+                }
+            } else {
+                MessageBox.Show(this, "控制台窗口启动失败：" + error.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
             Close();
         }
     }

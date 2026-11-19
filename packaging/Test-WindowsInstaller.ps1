@@ -16,7 +16,7 @@ try {
     if (!(Test-Path -LiteralPath $expected) -or !(Test-Path -LiteralPath $shortcut)) { throw 'App or Start menu entry missing' }
     $shell = New-Object -ComObject WScript.Shell
     if ($shell.CreateShortcut($shortcut).TargetPath -ne $expected) { throw 'Incorrect Start menu shortcut' }
-    foreach ($binary in 'runtime/node.exe','usb/iphone-usb.exe','WebView2Loader.dll','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll') {
+    foreach ($binary in 'runtime/node.exe','usb/iphone-usb.exe','usb/driver/usb-driver.ps1','usb/driver/install-filter.exe','web/setup.js','lib/setup.js','WebView2Loader.dll','Microsoft.Web.WebView2.Core.dll','Microsoft.Web.WebView2.WinForms.dll') {
         if (!(Test-Path -LiteralPath (Join-Path $target $binary))) { throw "Missing runtime: $binary" }
     }
 } finally {

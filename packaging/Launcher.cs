@@ -10,8 +10,8 @@ using System.Windows.Forms;
 
 [assembly: AssemblyTitle("iPhone / iPad 控制台")]
 [assembly: AssemblyProduct("iPad Control Console")]
-[assembly: AssemblyVersion("1.5.91.0")]
-[assembly: AssemblyInformationalVersion("1.6.0-preview.2")]
+[assembly: AssemblyVersion("1.5.92.0")]
+[assembly: AssemblyInformationalVersion("1.6.0-preview.3")]
 
 internal static class Launcher
 {

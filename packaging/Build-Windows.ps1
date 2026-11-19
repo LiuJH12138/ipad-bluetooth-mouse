@@ -24,7 +24,7 @@ if ((Get-AuthenticodeSignature $node).Status -ne 'Valid') { throw 'The build req
 Copy-Item $node "$stage/runtime/node.exe"
 Copy-Item (Join-Path (Split-Path $node) 'LICENSE') "$stage/licenses/Node-LICENSE.txt"
 foreach ($f in 'server.js','assistant.js','IpadBluetoothMouse.ps1','README.md') { Copy-Item (Join-Path $root $f) $stage }
-foreach ($f in (@(git -C $root ls-files -- web lib docs/overview.svg docs/guide.md docs/validation.md) + @('web/mouse-gestures.js','web/pointing.js','web/absolute-pointer.js') | Sort-Object -Unique)) {
+foreach ($f in (@(git -C $root ls-files -- web lib docs/overview.svg docs/guide.md docs/validation.md) + @('web/mouse-gestures.js','web/pointing.js','web/absolute-pointer.js','web/setup.js','lib/setup.js','lib/usb-setup.js') | Sort-Object -Unique)) {
     $target = Join-Path $stage $f
     $null = New-Item -ItemType Directory -Force -Path (Split-Path $target)
     Copy-Item -LiteralPath (Join-Path $root $f) -Destination $target
@@ -63,7 +63,7 @@ Write-WizardBitmap 'banner' 58 ([Drawing.Rectangle]::new(431,3,52,52))
 Check 'Generate the installer manifest'
 & "$wix/candle.exe" -nologo -out "$work/installer.wixobj" "$work/installer.wxs"
 Check 'Compile the installer'
-$package = Join-Path $out 'iPad-Control-Console-1.6.0-preview.2-win-x64.msi'
+$package = Join-Path $out 'iPad-Control-Console-1.6.0-preview.3-win-x64.msi'
 & "$wix/light.exe" -nologo -spdb -ext "$wix/WixUIExtension.dll" -cultures:zh-CN -out $package "$work/installer.wixobj"
 Check 'Link and validate the installer'
 (Get-FileHash $package).Hash.ToLowerInvariant() + '  ' + (Split-Path $package -Leaf) | Set-Content -Encoding ascii "$package.sha256"

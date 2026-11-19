@@ -2,13 +2,19 @@
 
 [返回产品首页](../README.md) · [真机验证记录](validation.md)
 
+## 首次配置
+
+适用于 1.6.0-preview.3 和对应源码。安装版已包含采集程序和 USB 过滤驱动材料。
+
+1. **接线并解锁。** 用支持传输数据的线连接 iPhone 或 iPad，打开控制台，点 **一键配置**。检测到多台设备时，选择这次要配置的设备。
+2. **按出现的提示操作。** 缺少 Apple 设备支持时，从界面打开 Microsoft Store 安装 **Apple Devices**，再回到配置页。已有服务和驱动会自动跳过；当 Windows 请求管理员许可时核对并确认。仅当向导提示时才需重新插线。
+3. **在设备上确认配对。** 如果设备询问是否信任电脑，请在设备上确认。按向导提示开启辅助触控，在设备的蓝牙设置中选择向导显示的电脑名称并核对配对码。保持一个背景清晰、静止的页面，方便控制台核对 USB 画面与蓝牙指针。核对成功即可点画面、用键盘输入。
+
+只需要画面时选 **仅投屏**。之后若想补配驱动，在 **切换设备** 中选中目标，再点 **配置此设备**。自动配置不会开启助手读图授权。关闭或取消后可以重新进入，控制台会再检查实际状态。旧式相对鼠标的人工核对见下节。[Apple 对「信任此电脑」的说明](https://support.apple.com/zh-cn/109054)
+
 ## 在 Windows 上控制 iPhone
 
-本节适用于当前源码预览版，iPhone 和 iPad 共用同一套界面。
-
-1. 用数据线连接 iPhone，解锁并信任电脑。每台设备各自需要 USB 采集过滤驱动。首次配置时在驱动管理器中选中对应手机，保留 Apple USB 驱动，按提示重新插线。[上游有线配置说明](https://github.com/RayrenSX/iPhoneMirror/blob/main/README.en.md)
-2. 在 iPhone 打开「设置 → 辅助功能 → 触控 → 辅助触控」，在控制台左栏的 **蓝牙键鼠** 行点 **连接**，然后在手机的蓝牙设置中与电脑配对。连接后，同一行可以断开蓝牙。
-3. 在预览中央点 **USB 直连**。多台设备同时接线时，选中要控制的那一台。手机出现实时画面后，打开背景简单的静止页面，在左栏 **指针定位** 点 **核对蓝牙设备** 或 **验证坐标**。三个落点通过后，即可直接点按画面。
+iPhone 和 iPad 共用同一套首次配置。iPhone 的辅助触控位于「设置 → 辅助功能 → 触控 → 辅助触控」。
 
 ### 同时接着 iPhone 和 iPad
 
@@ -38,21 +44,20 @@
 
 ### USB 配置
 
-从源码运行时，在项目目录执行一次下列命令。脚本校验 Mirrorlab 固定版本的源码和运行库，下载便携 LLVM-MinGW 编译器（约 191 MB，缓存在项目的 `build/tooling`），然后把带静态画面修复的采集组件安装到 `.local/usb-v0.2.0`。MSI 已内置该组件。
+从源码运行时，首页的 **一键配置** 可以准备缺失的采集组件。手动构建或排查下载失败时，在项目目录执行下列命令。脚本校验 Mirrorlab 固定版本的源码和运行库，下载便携 LLVM-MinGW 编译器（约 191 MB，缓存在项目的 `build/tooling`），然后把带静态画面修复的采集组件安装到 `.local/usb-v0.2.0`。MSI 已内置该组件。
 
 ```powershell
 powershell.exe -NoProfile -File .\Install-UsbReceiver.ps1
 ```
 
-电脑需要 Apple Mobile Device USB 驱动，以及针对这台 iPad 的 libusb-win32 采集过滤驱动。已有驱动的电脑可以直接启动。新电脑若提示缺少过滤驱动，请按上游的 Windows USB 配置说明为目标设备配置，再重新插线。[Mirrorlab 固定版本](https://github.com/SimonDaBoss/mirrorlab/tree/ade4e6429690ebcf430ea19a142a2e01546da8ef) · [iPhoneMirror 驱动配置](https://github.com/RayrenSX/iPhoneMirror)
+电脑需要 Apple Mobile Device USB 驱动，以及针对这台 iPad 的 libusb-win32 采集过滤驱动。已有驱动的电脑可以直接启动。新版会按所选设备配置缺失的过滤驱动。手动排查或使用旧安装版时，可参阅上游的 Windows USB 配置说明。[Mirrorlab 固定版本](https://github.com/SimonDaBoss/mirrorlab/tree/ade4e6429690ebcf430ea19a142a2e01546da8ef) · [iPhoneMirror 驱动配置](https://github.com/RayrenSX/iPhoneMirror)
 
 ### 启动
 
 1. 将整个仓库下载到本地，解压。
 2. 双击 **`Start-IpadConsole.cmd`**。启动器在后台启动本机服务，并打开独立桌面窗口。只有显式运行 `Start-IpadConsole.ps1 -Browser` 时才打开浏览器。
-3. 用数据线接入并解锁 iPad，关闭其他正在使用它的 USB 投屏窗口，点击 **「USB 直连」**。画面出现后，展开左栏 **连接详情** 可以查看帧率与本机解码绘制耗时。
-4. 在左栏的 **蓝牙键鼠** 行点 **连接**。首次使用时，在 iPad「设置 → 蓝牙」中选择这台 Windows 电脑的名称，并核对两端配对提示。
-5. 在 **指针定位** 核对蓝牙设备与画面的对应关系。展开 **连接详情** 查看键盘状态，然后在画面下方的 **操控方式** 选择模式。
+3. 用数据线接入并解锁 iPhone 或 iPad，关闭其他正在使用它的 USB 投屏，点 **一键配置**。只想看画面时选 **仅投屏**。
+4. 根据向导完成首次信任和蓝牙配对。看到实时画面后，可在 **连接详情** 查看帧率和键鼠状态，在 **操控方式** 切换输入模式。
 
 也可以从项目目录直接打开 USB 预览。
 

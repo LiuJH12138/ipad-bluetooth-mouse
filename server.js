@@ -4,11 +4,24 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { BluetoothBridge } = require('./lib/bluetooth');
+const { Setup } = require('./lib/setup');
 const { UsbVideo } = require('./lib/usb-video');
 
-function createApp({ bridge, token, now = Date.now, publishAssistant, usb = new UsbVideo() }) {
+function createApp({ bridge, token, now = Date.now, publishAssistant, usb = new UsbVideo(), setup = new Setup() }) {
   let lease = null, frame = null;
   let assistant = null;
+  let configuring = null;
+  async function configure(key, operation) {
+    if (configuring) {
+      if (configuring.key === key) return configuring.result;
+      throw conflict('另一项设备配置正在进行。');
+    }
+    if (usb.busy || source) throw conflict('请先停止正在进行的 USB 投屏。');
+    const result = Promise.resolve().then(operation);
+    configuring = {key,result};
+    try { return await result; }
+    finally { configuring = null; }
+  }
   const assistantRoutes = new Set(['GET /api/status','GET /api/frame','POST /api/control/start','POST /api/control/stop','POST /api/input','POST /api/assistant/sample']);
   function revokeAssistant() {
     if (!assistant) return;
@@ -132,6 +145,7 @@ function createApp({ bridge, token, now = Date.now, publishAssistant, usb = new 
     const pathname = new URL(req.url, origin).pathname;
     if (!pathname.startsWith('/api/')) {
       const assets = { '/': ['index.html', 'text/html'], '/app.js': ['app.js', 'text/javascript'], '/keyboard.js': ['keyboard.js', 'text/javascript'], '/style.css': ['style.css', 'text/css'] };
+      assets['/setup.js'] = ['setup.js', 'text/javascript'];
       assets['/usb-video.js'] = ['usb-video.js', 'text/javascript'];
       assets['/pointing.js'] = ['pointing.js', 'text/javascript'];
       assets['/absolute-pointer.js'] = ['absolute-pointer.js', 'text/javascript'];
@@ -149,6 +163,7 @@ function createApp({ bridge, token, now = Date.now, publishAssistant, usb = new 
     if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) return json(res, 401, { error: '请通过项目启动器打开控制台。' });
     if (isAssistant && !assistantRoutes.has(req.method + ' ' + pathname)) return json(res, 403, { error: '该操作需要控制台授权。' });
     try {
+      if (req.method === 'GET' && pathname === '/api/setup') return json(res,200,await setup.status());
       if (req.method === 'GET' && pathname === '/api/devices') {
         const devices = await usb.devices();
         recordInventory(devices);
@@ -198,7 +213,25 @@ function createApp({ bridge, token, now = Date.now, publishAssistant, usb = new 
       const data = JSON.parse((await body(req, 4096)).toString() || '{}');
       expire();
       if (isAssistant && (assistant?.token !== credential || (pathname !== '/api/control/stop' && frame?.view !== assistant?.view))) return json(res, 409, { error: '等待已授权窗口恢复实时画面。' });
+      if (pathname.startsWith('/api/setup/')) {
+        if (!data || Array.isArray(data) || typeof data !== 'object') return json(res,400,{error:'无效配置请求。'});
+        const fields = Object.keys(data);
+        if (pathname === '/api/setup/driver') {
+          if (fields.length !== 1 || typeof data.deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(data.deviceId))
+            return json(res,400,{error:'请选择已连接的 USB 设备。'});
+          const result = await configure('driver:' + data.deviceId, () => usb.setupDevice(data.deviceId));
+          if (result.status === 'cancelled') throw conflict('已取消 Windows 管理员确认，可以重试。');
+          return json(res,200,{driver:result.status});
+        }
+        if (fields.length) return json(res,400,{error:'配置请求包含多余参数。'});
+        if (pathname === '/api/setup/receiver' || pathname === '/api/setup/apple-service') {
+          await configure(pathname, () => pathname === '/api/setup/receiver' ? setup.prepareReceiver() : setup.startAppleService());
+          return json(res,200,{ok:true});
+        }
+        return json(res,404,{error:'未知配置步骤。'});
+      }
       if (pathname === '/api/usb/video') {
+        if (configuring) throw conflict('正在配置设备，请稍后再打开投屏。');
         const {deviceId} = data;
         if (deviceId !== undefined && (typeof deviceId !== 'string' || !/^[a-f0-9]{32}$/.test(deviceId))) return json(res,400,{error:'无效 USB 设备。'});
         await usb.stream(res, changeSource, deviceId); return;
@@ -371,7 +404,7 @@ if (require.main === module) {
       return;
     }
     fs.mkdirSync(path.join(__dirname, '.local'), { recursive: true });
-    fs.writeFileSync(path.join(__dirname, '.local', 'session.json'), JSON.stringify({ pid: process.pid, port, token, url }));
+    fs.writeFileSync(path.join(__dirname, '.local', 'session.json'), JSON.stringify({ pid: process.pid, port, token, url, setupVersion: 1 }));
     console.log('iPad console is listening on loopback.');
   });
   let closing = false;

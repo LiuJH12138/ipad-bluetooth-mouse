@@ -24,6 +24,57 @@ test('unauthorized and cross-origin requests cannot control the device',async t=
   assert.equal((await f.request('status')).status,200);
   assert.deepEqual(f.events,[]);
 });
+test('setup accepts only console credentials, known actions and an exact target', async t => {
+  let key;
+  const calls = [];
+  const id = 'a'.repeat(32);
+  const status = {receiverReady:true,sourceInstallable:false,appleService:'ready',computerName:'TEST'};
+  const f = await fixture(t, {
+    setup:{status:async()=>status,prepareReceiver:async()=>calls.push('receiver'),startAppleService:async()=>calls.push('apple')},
+    usb:{setupDevice:async target=>{calls.push(target); return {status:'replug'};}},
+    publishAssistant:(_port,token)=>{key=token;}
+  });
+  assert.deepEqual(await (await f.request('setup')).json(),status);
+  await f.request('assistant/enable',{});
+  const assistant = {'X-Assistant-Token':key};
+  for (const [route,body] of [['setup',undefined],['setup/receiver',{}],['setup/apple-service',{}],['setup/driver',{deviceId:id}]]) {
+    assert.equal((await f.request(route,body,assistant)).status,403);
+  }
+  assert.equal((await f.request('setup/receiver',{path:'untrusted'})).status,400);
+  assert.equal((await f.request('setup/apple-service',{name:'other'})).status,400);
+  assert.equal((await f.request('setup/driver',{})).status,400);
+  assert.equal((await f.request('setup/driver',{deviceId:id,all:true})).status,400);
+  assert.equal((await f.request('setup/driver',{deviceId:'other'})).status,400);
+  assert.deepEqual(calls,[]);
+  assert.equal((await f.request('setup/receiver',{})).status,200);
+  assert.equal((await f.request('setup/apple-service',{})).status,200);
+  assert.deepEqual(await (await f.request('setup/driver',{deviceId:id})).json(),{driver:'replug'});
+  assert.deepEqual(calls,['receiver','apple',id]);
+});
+
+test('setup and capture cannot race, and cancelled elevation can be retried', async t => {
+  const id = 'b'.repeat(32);
+  let finish, calls = 0;
+  const started = new Promise(resolve=>{finish=resolve;});
+  let complete;
+  const pending = new Promise(resolve=>{complete=resolve;});
+  const usb = {busy:true,setupDevice:async()=>{
+    if (++calls===1) { finish(); await pending; return {status:'cancelled'}; }
+    return {status:'ready'};
+  }};
+  const f = await fixture(t,{usb});
+  assert.equal((await f.request('setup/driver',{deviceId:id})).status,409);
+  usb.busy=false;
+  const first=f.request('setup/driver',{deviceId:id});
+  await started;
+  assert.equal((await f.request('usb/video',{deviceId:id})).status,409);
+  assert.equal((await f.request('setup/apple-service',{})).status,409);
+  complete();
+  assert.equal((await first).status,409);
+  assert.deepEqual(await (await f.request('setup/driver',{deviceId:id})).json(),{driver:'ready'});
+  assert.equal(calls,2);
+});
+
 test('exclusive lease, validation, replay rejection and stale requests after stop',async t=>{
   const f=await fixture(t);
   const {lease}=await (await f.request('control/start',{})).json();

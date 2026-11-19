@@ -7,7 +7,7 @@ const path = require('node:path');
 const {picturePoint} = require('../web/pointing');
 const {PictureMouseGesture} = require('../web/mouse-gestures');
 const IpadKeyboard = require('../web/keyboard');
-const app = fs.readFileSync(path.join(__dirname, '../web/app.js'), 'utf8');
+const app = ['app.js','setup.js'].map(name => fs.readFileSync(path.join(__dirname, '../web', name), 'utf8')).join('\n');
 
 class Control extends EventTarget {
   children = [];
@@ -35,7 +35,7 @@ async function waitFor(condition) {
 
 // Exercise app.js from USB start and the status poll through the actual DOM
 // event listeners. Replace only hardware, image recognition, and browser I/O.
-async function openConsole({alignmentGate, heldMoveGate, absolute = false, probeError, family, status = {}, devices = [{id:"test-phone", family:"iPhone", driver:"ready"}], autoStart = true} = {}) {
+async function openConsole({setupApi, frameGate, alignmentGate, heldMoveGate, absolute = false, probeError, family, status = {}, devices = [{id:"test-phone", family:"iPhone", driver:"ready"}], autoStart = true} = {}) {
   const controls = new Map();
   function element(id) {
     if (!controls.has(id)) {
@@ -56,6 +56,11 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
   async function fetch(url, options) {
     const data = options.body && JSON.parse(options.body);
     let result = {};
+    if (setupApi) {
+      (output.routes ||= []).push(url);
+      const setupResult = await setupApi(url, data);
+      if (setupResult !== undefined) return {ok:true, json:async () => setupResult};
+    }
     switch (url) {
       case '/api/connect':
         (output.bluetoothActions ||= []).push('connect');
@@ -108,7 +113,7 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
   }
   vm.runInNewContext(app, {
     window, document, location: {search: '', hash: ''}, sessionStorage: {getItem() {}},
-    performance, setTimeout, clearTimeout, setInterval: (callback, ms) => timers.set(ms, callback),
+    performance, setTimeout: (callback, ms) => setTimeout(callback, setupApi && [1000,1800,2000].includes(ms) ? 10 : ms), clearTimeout, setInterval: (callback, ms) => timers.set(ms, callback),
     URLSearchParams, AbortController, fetch, IpadKeyboard, PictureMouseGesture, picturePoint,
     absoluteCoordinates: require('../web/absolute-pointer').absoluteCoordinates,
     async verifyAbsolutePointer({send,validate}) {
@@ -124,7 +129,8 @@ async function openConsole({alignmentGate, heldMoveGate, absolute = false, probe
       output.device = deviceId;
       canvas.width = 840; canvas.height = 630;
       output.rotate = turns => onFrame(1, turns, family);
-      output.rotate(0);
+      if (frameGate) frameGate.then(() => { if (!signal.aborted) output.rotate(0); });
+      else output.rotate(0);
       return new Promise(resolve => signal.addEventListener('abort', resolve, {once: true}));
     },
     async aimPointer(target, sample, move, validate) {
@@ -694,4 +700,198 @@ test('relative-only peer stays locked until the displayed pointer motion is conf
   assert.equal(output.bound.peerId,'replacement-peer');
   assert.equal(element('control').disabled,false);
   assert.equal(element('position-status').textContent,'视觉定位');
+});
+
+const preparedSetup = {receiverReady:true, sourceInstallable:false, appleService:'ready', computerName:'Desk'};
+const setupStatus = () => ({state:'connected', needsPairing:true, peers:[{id:'mouse',absolute:true,keyboard:true}]});
+test('setup selects one USB target, waits for its replug and first frame, pairs and verifies before enabling picture control', async () => {
+  const phone = {id:'phone', family:'iPhone', driver:'missing'};
+  const pad = {id:'tablet', family:'iPad', driver:'ready'};
+  let devices = [phone,pad];
+  const frame = Promise.withResolvers();
+  const status = {state:'idle',active:0,keyboardActive:0,needsPairing:true,peers:[]};
+  const {element,output,pollStatus} = await openConsole({absolute:true,autoStart:false,frameGate:frame.promise,status,setupApi:async(url, data) => {
+    if (url === '/api/setup') return {...preparedSetup, receiverReady:false, sourceInstallable:true, appleService:'stopped'};
+    if (['/api/setup/receiver','/api/setup/apple-service'].includes(url)) return {ok:true};
+    if (url === '/api/devices') return {devices};
+    if (url === '/api/setup/driver') { assert.equal(data.deviceId,phone.id); devices = [pad]; return {driver:'replug'}; }
+  }});
+  const done = element('setup-start').onclick();
+  element('setup-start').onclick();
+  await waitFor(() => element('setup-devices').children.length === 2);
+  element('setup-devices').children[0].onclick();
+  await waitFor(() => element('setup-title').textContent === '等待设备重新连接');
+  assert.equal(output.device, undefined);
+  phone.driver = 'ready';
+  devices = [pad,phone];
+  await waitFor(() => output.device === phone.id);
+  assert.equal(output.bluetoothActions, undefined);
+  assert.equal(element('transport').hidden, true);
+  frame.resolve();
+  await waitFor(() => element('setup-title').textContent === '等待设备蓝牙配对');
+  assert.match(element('setup-detail').textContent,/Desk/);
+  Object.assign(status,setupStatus(),{active:1,keyboardActive:1,absoluteActive:1});
+  await pollStatus();
+  await done;
+  assert.equal(element('setup-panel').hidden, true);
+  assert.equal(element('mode-current').textContent, '画面操控');
+  assert.deepEqual(output.bluetoothActions,['connect']);
+  assert.deepEqual(output.routes.filter(url => url.startsWith('/api/setup')), ['/api/setup','/api/setup/receiver','/api/setup/apple-service','/api/setup/driver']);
+  assert.equal(output.bound.deviceId, phone.id);
+  assert.equal(output.reports.length, 3);
+  assert.ok(output.reports.every(report => report.kind === 'absolute' && report.buttons === 0));
+  assert.ok(!output.routes.includes('/api/assistant/enable'));
+});
+
+test('missing Apple support can be rechecked, and preview-only selection bypasses bluetooth completely', async () => {
+  let devices = [];
+  const {element,output} = await openConsole({absolute:true,autoStart:false,setupApi:async url => {
+    if (url === '/api/setup') return {...preparedSetup, appleService:'missing'};
+    if (url === '/api/devices') return {devices};
+  }});
+  const done = element('setup-start').onclick();
+  await waitFor(() => element('setup-store').hidden === false);
+  element('setup-skip').onclick();
+  devices = [{id:'phone',family:'iPhone',driver:'ready'}];
+  element('setup-next').onclick();
+  await done;
+  assert.equal(element('setup-panel').hidden, true);
+  assert.equal(element('mode-current').textContent, '仅预览');
+  assert.equal(output.device,'phone');
+  assert.ok(!output.routes.includes('/api/setup/apple-service'));
+  assert.ok(!output.routes.includes('/api/connect'));
+  assert.ok(!output.routes.includes('/api/control/start'));
+});
+
+test('a failed probe can be retried in the same USB stream and manual relative confirmation is never implicit', async () => {
+  let attempts = 0;
+  const {element,output} = await openConsole({absolute:true,autoStart:false,status:setupStatus(),
+    probeError:()=>{ if (++attempts === 1) throw Error('first probe failed'); },
+    setupApi:async url => url === '/api/setup' ? preparedSetup : undefined});
+  const done = element('setup-start').onclick();
+  await waitFor(() => element('setup-title').textContent === '配置尚未完成');
+  assert.equal(element('mode-current').textContent, '仅预览');
+  assert.match(element('setup-detail').textContent,/first probe failed/);
+  element('setup-next').onclick();
+  await done;
+  assert.equal(attempts, 2);
+  assert.equal(output.routes.filter(url => url === '/api/devices').length, 1);
+  assert.equal(element('mode-current').textContent, '画面操控');
+  const relative = await openConsole({autoStart:false,status:{needsPairing:true,canIdentifyRelative:true,peers:[{id:'old',absolute:false,keyboard:true}]},
+    setupApi:async url => url === '/api/setup' ? preparedSetup : undefined});
+  const manual = relative.element('setup-start').onclick();
+  await waitFor(() => relative.element('setup-title').textContent === '核对旧版蓝牙键鼠');
+  assert.equal(relative.output.identified, undefined);
+  relative.element('setup-next').onclick();
+  await waitFor(() => relative.element('setup-title').textContent === '确认指针移动');
+  assert.equal(relative.output.bound, undefined);
+  relative.element('setup-next').onclick({detail:2});
+  assert.equal(relative.output.bound, undefined);
+  relative.element('setup-next').onclick({detail:1});
+  await manual;
+  assert.equal(relative.output.bound.peerId,'old');
+  assert.equal(relative.element('mode-current').textContent, '画面操控');
+});
+
+test('cancelled setup cannot continue into an elevation, and repeated start does not duplicate setup', async () => {
+  const old = Promise.withResolvers();
+  let starts = 0;
+  const {element,output} = await openConsole({autoStart:false,setupApi:async url => {
+    if (url === '/api/setup') return ++starts === 1 ? old.promise : preparedSetup;
+  }});
+  const first = element('setup-start').onclick();
+  element('setup-start').onclick();
+  assert.equal(starts, 1);
+  element('setup-cancel').onclick();
+  const second = element('setup-start').onclick();
+  element('setup-skip').onclick();
+  await second;
+  old.resolve({...preparedSetup,receiverReady:false,sourceInstallable:true});
+  await first;
+  assert.equal(starts,2);
+  assert.ok(!output.routes.includes('/api/setup/receiver'));
+  assert.equal(element('mode-current').textContent, '仅预览');
+});
+
+test('skipping control while the first probe is about to start preserves streaming and sends no input', async () => {
+  const {element,output} = await openConsole({autoStart:false,absolute:true,status:setupStatus(),
+    setupApi:async url => url === '/api/setup' ? preparedSetup : undefined});
+  const done = element('setup-start').onclick();
+  await waitFor(() => element('setup-title').textContent === '即将核对三个指针落点');
+  element('setup-skip').onclick();
+  await done;
+  assert.equal(element('setup-panel').hidden, true);
+  assert.equal(element('transport').hidden, false);
+  assert.equal(element('mode-current').textContent, '仅预览');
+  assert.deepEqual(output.reports,[]);
+  assert.ok(!output.routes.includes('/api/control/start'));
+});
+
+test('configuring a second USB device keeps the original stream until confirmed and pins the selected device', async () => {
+  const phone = {id:'phone', family:'iPhone', driver:'ready'}, pad = {id:'pad', family:'iPad', driver:'missing'};
+  const devices = [phone];
+  const {element,output} = await openConsole({autoStart:false,devices,setupApi:async(url,data) => {
+    if (url === '/api/setup') return preparedSetup;
+    if (url === '/api/setup/driver') { assert.equal(data.deviceId,'pad'); pad.driver='ready'; return {driver:'ready'}; }
+  }});
+  await element('usb').onclick();
+  await waitFor(() => element('transport').hidden === false);
+  await element('assistant').onclick();
+  devices.push(pad);
+  await element('usb').onclick();
+  let configure = element('device-list').children[1];
+  assert.equal(configure.disabled,false);
+  assert.match(configure.textContent,/iPad.*配置此设备/);
+  const dismissed = configure.onclick();
+  assert.equal(element('setup-next').textContent,'切换并配置');
+  element('setup-cancel').onclick();
+  await dismissed;
+  assert.equal(output.device,'phone');
+  assert.equal(output.revoked,undefined);
+  assert.ok(!output.routes.includes('/api/setup/driver'));
+  await element('usb').onclick();
+  configure = element('device-list').children[1];
+  const done = configure.onclick();
+  element('setup-skip').onclick();
+  assert.equal(output.revoked,undefined);
+  element('setup-next').onclick();
+  await done;
+  assert.equal(output.revoked,true);
+  assert.equal(output.device,'pad');
+  assert.equal(element('mode-current').textContent,'仅预览');
+  assert.equal(output.routes.filter(url => url === '/api/setup/driver').length,1);
+});
+
+test('preview-only manual picker can configure its selected missing driver without enrolling a keyboard', async () => {
+  const devices = [{id:'pad',family:'iPad',driver:'missing'}];
+  const {element,output} = await openConsole({autoStart:false,devices,setupApi:async(url,data) => {
+    if (url === '/api/setup') return preparedSetup;
+    if (url === '/api/setup/driver') { assert.equal(data.deviceId,'pad'); devices[0].driver='ready'; return {driver:'ready'}; }
+  }});
+  await element('usb').onclick();
+  const configure = element('device-list').children[0];
+  assert.equal(configure.disabled,false);
+  await configure.onclick();
+  assert.equal(output.device,'pad');
+  assert.equal(element('mode-current').textContent,'仅预览');
+  assert.ok(!output.routes.includes('/api/connect'));
+});
+
+test('setup shows a Bluetooth start error and retry recovers without restarting video', async () => {
+  let first = true;
+  const status={state:'idle',active:0,keyboardActive:0};
+  const {element, output, pollStatus} = await openConsole({autoStart:false,status,setupApi:async url => {
+    if (url === '/api/setup') return preparedSetup;
+    if (url === '/api/connect' && first) { first=false; throw Error('模拟蓝牙不可用'); }
+  }});
+  const done = element('setup-start').onclick();
+  await waitFor(() => element('setup-title').textContent === '配置尚未完成');
+  assert.match(element('setup-detail').textContent,/模拟蓝牙不可用/);
+  element('setup-next').onclick();
+  await waitFor(() => element('setup-title').textContent === '等待设备蓝牙配对');
+  Object.assign(status,{state:'connected',active:1,keyboardActive:1,needsPairing:false});
+  await pollStatus();
+  await done;
+  assert.equal(element('mode-current').textContent,'画面操控');
+  assert.equal(output.routes.filter(url => url === '/api/devices').length,1);
 });

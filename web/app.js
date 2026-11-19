@@ -260,8 +260,8 @@ function update() {
   const usbSlot = $(usbLive ? 'active-usb-action' : 'idle-usb-action');
   if (usbAction.parentElement !== usbSlot) usbSlot.append(usbAction);
   usbAction.disabled = openingDevice || (!!usbSession && !usbLive);
-  usbAction.classList.toggle('primary', !usbLive);
-  usbAction.textContent = usbLive ? '切换设备' : usbSession ? '正在连接…' : 'USB 直连';
+  $('setup-start').disabled = openingDevice || !!usbSession;
+  usbAction.textContent = usbLive ? '切换设备' : usbSession ? '正在连接…' : '仅投屏';
   document.body.classList.toggle('controlling', !!lease);
 }
 async function clearFrame() { frameEpoch++; try { await api('frame/clear', {}); } catch {} }
@@ -341,6 +341,12 @@ function closeDevicePicker() {
   deviceListing++;
   if (devicePicker.open) devicePicker.close();
 }
+function usbDeviceLabel(device, devices) {
+  const family = ['iPhone','iPad'].includes(device.family) ? device.family : 'Apple 设备';
+  const siblings = devices.filter(other => other.family === device.family);
+  const model = siblings.length > 1 && device.model ? device.model : family;
+  return siblings.filter(other => other.model === device.model).length > 1 ? model + ' · ' + device.id.slice(-6) : model;
+}
 async function chooseUsbDevice(autoConnect) {
   if (openingDevice) return;
   const revision = ++deviceListing;
@@ -358,21 +364,29 @@ async function chooseUsbDevice(autoConnect) {
     $('device-picker-status').textContent = devices.length ? '' : '没有发现设备。请接好数据线、解锁设备，再刷新。';
     for (const device of devices) {
       const option = document.createElement('button');
-      const family = ['iPhone','iPad'].includes(device.family) ? device.family : 'Apple 设备';
-      const siblings = devices.filter(other => other.family === device.family);
-      const model = siblings.length > 1 && device.model ? device.model : family;
-      const sameModel = siblings.filter(other => other.model === device.model).length > 1;
-      const suffix = sameModel ? ' · ' + device.id.slice(-6) : '';
       const current = device.id === usbDeviceId;
       const state = current ? '正在投屏' : device.driver === 'ready' ? '' :
-        device.driver === 'replug' ? '请重新插线' : '需配置 USB 驱动';
-      option.textContent = model + suffix + (state ? ' · ' + state : '');
-      option.disabled = current || device.driver !== 'ready';
-      option.onclick = () => openUsbDevice(device.id);
+        device.driver === 'replug' ? '配置此设备（需重新插线）' : '配置此设备';
+      option.textContent = usbDeviceLabel(device, devices) + (state ? ' · ' + state : '');
+      option.disabled = current;
+      option.onclick = () => {
+        if (device.driver === 'ready') return openUsbDevice(device.id);
+        const label = usbDeviceLabel(device, devices);
+        closeDevicePicker();
+        return startConsoleSetup({deviceId:device.id, label, videoOnly:!usbLive});
+      };
       $('device-list').append(option);
     }
   } catch (error) {
-    if (revision === deviceListing) $('device-picker-status').textContent = error.message;
+    if (revision === deviceListing) {
+      $('device-picker-status').textContent = error.message;
+      if (!usbSession) {
+        const configure = document.createElement('button');
+        configure.textContent = '配置 USB 投屏';
+        configure.onclick = () => { closeDevicePicker(); return startConsoleSetup({videoOnly:true}); };
+        $('device-list').append(configure);
+      }
+    }
   } finally {
     if (revision === deviceListing) $('refresh-devices').disabled = false;
   }
@@ -381,8 +395,8 @@ $('usb').onclick = () => chooseUsbDevice(!usbLive);
 $('refresh-devices').onclick = () => chooseUsbDevice(false);
 $('close-devices').onclick = closeDevicePicker;
 devicePicker.addEventListener('cancel', () => { deviceListing++; });
-async function openUsbDevice(deviceId) {
-  if (openingDevice || !deviceId) return;
+async function openUsbDevice(deviceId, {signal, onLive} = {}) {
+  if (openingDevice || !deviceId || signal?.aborted) return;
   openingDevice = true;
   closeDevicePicker();
   update();
@@ -391,11 +405,14 @@ async function openUsbDevice(deviceId) {
   } finally {
     openingDevice = false;
   }
+  if (signal?.aborted) return;
   usbDeviceId = deviceId;
   needsPairing = true;
   connected = keyboardConnected = absoluteActive = false;
   const session = new AbortController();
   usbSession = session;
+  const cancelStartup = () => session.abort();
+  signal?.addEventListener('abort', cancelStartup, {once:true});
   update();
   $('video-status').textContent = '正在打开 USB 视频…';
   let frames = 0, decodeMs = 0, last = performance.now();
@@ -416,6 +433,7 @@ async function openUsbDevice(deviceId) {
       wakePointSample?.();
       if (!usbLive) {
         usbLive = true;
+        signal?.removeEventListener('abort', cancelStartup);
         setUsbFamily(family);
         usbCanvas.hidden = false;
         $('placeholder').hidden = true;
@@ -424,6 +442,7 @@ async function openUsbDevice(deviceId) {
         notice('');
         last = performance.now();
         update();
+        onLive?.();
       }
       frames++;
       decodeMs += ms;
@@ -435,14 +454,16 @@ async function openUsbDevice(deviceId) {
     } });
   } catch (error) {
     if (usbSession === session) notice(error.message, true);
+    if (onLive) throw error;
   } finally {
+    signal?.removeEventListener('abort', cancelStartup);
     if (usbSession === session) await stopUsb();
   }
 }
 $('stop-usb').onclick = async () => { await stopUsb(); notice(''); };
-$('connect').onclick = async () => {
+$('connect').onclick = () => changeBluetooth(bluetoothRunning());
+async function changeBluetooth(disconnect, reportFailure = false) {
   if (connecting) return;
-  const disconnect = bluetoothRunning();
   connecting = true;
   statusRevision++;
   update();
@@ -458,9 +479,11 @@ $('connect').onclick = async () => {
       bluetoothState = status.state;
     }
     await updateBluetooth();
-  } catch (error) { notice(error.message,true); }
-  finally { connecting = false; update(); }
-};
+  } catch (error) {
+    notice(error.message,true);
+    if (reportFailure) throw error;
+  } finally { connecting = false; update(); }
+}
 $('control').onclick = async () => {
   if (!ready() || startingCapture || aiming || pairing) return;
   closeModePicker();
@@ -667,7 +690,8 @@ pictureKeyboard.addEventListener('beforeinput', e => {
 });
 if (startUsb) $('usb').click();
 
-$('point').onclick = async () => {
+$('point').onclick = enterPictureMode;
+async function enterPictureMode() {
   if (!ready() || startingCapture || pairing) return;
   closeModePicker();
   if (!pointMode) {
@@ -677,7 +701,7 @@ $('point').onclick = async () => {
   if (canPoint()) focusPictureKeyboard();
   notice('');
   update();
-};
+}
 
 $('verify-position').onclick = async () => {
   if (relativePeerId) { await identifyRelative(false); return; }
@@ -743,7 +767,7 @@ function pointSampler(geometry, validate) {
 }
 
 $('confirm-relative').onclick = () => identifyRelative(true);
-async function identifyRelative(confirm) {
+async function identifyRelative(confirm, isCurrent = () => true) {
   if (pairing || !usbLive || !relativePeerId || !needsPairing) return;
   const deviceId = usbDeviceId, peerId = relativePeerId, layout = pointerLayout;
   const challenge = relativeChallenge;
@@ -757,7 +781,7 @@ async function identifyRelative(confirm) {
       await updateBluetooth();
     } else {
       const {confirmation} = await api('control/identify-relative',{deviceId,peerId});
-      if (usbLive && needsPairing && deviceId === usbDeviceId && layout === pointerLayout && relativePeerId === peerId) {
+      if (isCurrent() && usbLive && needsPairing && deviceId === usbDeviceId && layout === pointerLayout && relativePeerId === peerId) {
         relativeChallenge = {peerId, confirmation, expires:performance.now()+60000};
       }
     }
@@ -769,16 +793,16 @@ async function identifyRelative(confirm) {
   }
 }
 
-async function verifyBluetoothDevice() {
-  if (pairing || !usbLive || !needsPairing || document.pointerLockElement) return;
+async function verifyBluetoothDevice(isCurrent = () => true, recheckBound = false) {
+  if (pairing || !usbLive || (!needsPairing && !recheckBound) || document.pointerLockElement) return;
   const deviceId = usbDeviceId, layout = pointerLayout, geometry = pictureGeometry();
-  const candidates = availablePeers.filter(peer => peer.absolute && (!peer.boundDeviceId || peer.boundDeviceId === deviceId));
+  const candidates = availablePeers.filter(peer => peer.absolute && (peer.boundDeviceId === deviceId || (needsPairing && !peer.boundDeviceId)));
   if (!candidates.length) return;
   pairing = true;
   await stopControl();
   const epoch = controlEpoch;
   function validate() {
-    if (epoch !== controlEpoch || layout !== pointerLayout || deviceId !== usbDeviceId || !usbLive || document.hidden)
+    if (!isCurrent() || epoch !== controlEpoch || layout !== pointerLayout || deviceId !== usbDeviceId || !usbLive || document.hidden)
       throw Error('画面已改变，蓝牙核对已取消。');
   }
   try {
@@ -813,7 +837,7 @@ async function verifyBluetoothDevice() {
       }
     }
   } catch (error) {
-    if (deviceId === usbDeviceId && layout === pointerLayout) {
+    if (isCurrent() && deviceId === usbDeviceId && layout === pointerLayout) {
       verificationDetail = error.message + ' 请确认设备已开启辅助触控并停在静止页面，再重新核对。';
       notice(verificationDetail,true);
     }
